@@ -14,6 +14,38 @@ struct Token<'a> {
     input: &'a str,               // トークン文字列
 }
 
+enum ASTNodeKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Num(i32),
+}
+
+struct ASTNode {
+    kind: ASTNodeKind,
+    lhs: Option<Box<ASTNode>>,
+    rhs: Option<Box<ASTNode>>,
+}
+
+impl ASTNode {
+    fn new(kind: ASTNodeKind) -> ASTNode {
+        ASTNode {
+            kind,
+            lhs: None,
+            rhs: None,
+        }
+    }
+
+    fn new_num(n: i32) -> ASTNode {
+        ASTNode {
+            kind: ASTNodeKind::Num(n),
+            lhs: None,
+            rhs: None,
+        }
+    }
+}
+
 impl<'a> Token<'a> {
     fn new(kind: TokenKind, input: &str) -> Token {
         Token {
