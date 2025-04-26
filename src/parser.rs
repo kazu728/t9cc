@@ -25,12 +25,11 @@ impl ASTNode {
 }
 
 // expr    = mul ("+" mul | "-" mul)*
-// mul     = primary ("*" primary | "/" primary)*
+// mul     = unary ("*" unary | "/" unary)*
+// unary   = ("+" | "-")? primary
 // primary = num | "(" expr ")"
 
-/**
- * expr    = mul ("+" mul | "-" mul)*
- */
+// expr = mul ("+" mul | "-" mul)*
 pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     let mut node = mul(token, input);
 
@@ -49,18 +48,16 @@ pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     node
 }
 
-/**
- * mul     = primary ("*" primary | "/" primary)*
- */
+//  mul = unary ("*" unary | "/" unary)*
 fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
-    let mut node = primary(token, input);
+    let mut node = unary(token, input);
 
     loop {
         if Token::consume(token, '*') {
-            let rhs = primary(token, input);
+            let rhs = unary(token, input);
             node = Some(Box::new(ASTNode::new(ASTNodeKind::Mul, node, rhs)));
         } else if Token::consume(token, '/') {
-            let rhs = primary(token, input);
+            let rhs = unary(token, input);
             node = Some(Box::new(ASTNode::new(ASTNodeKind::Div, node, rhs)));
         } else {
             break;
@@ -70,9 +67,22 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     node
 }
 
-/**
- * primary = num | "(" expr ")"
- */
+// unary   = ("+" | "-")? primary
+fn unary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+    if Token::consume(token, '+') {
+        return primary(token, input);
+    } else if Token::consume(token, '-') {
+        let node = primary(token, input);
+        return Some(Box::new(ASTNode::new(
+            ASTNodeKind::Sub,
+            Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
+            node,
+        )));
+    }
+    primary(token, input)
+}
+
+// primary = num | "(" expr ")"
 fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     if Token::consume(token, '(') {
         let node = expr(token, input);
@@ -185,6 +195,26 @@ mod tests {
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(4), None, None))),
                     ))),
+                ))),
+            },
+            // -1 * +2 が正しくparseされること
+            TestCase {
+                token: TestTokenStream::new("-1 * +2")
+                    .add(TokenKind::Reserved('-'), 0, 1)
+                    .add(TokenKind::Number(1), 1, 2)
+                    .add(TokenKind::Reserved('*'), 2, 3)
+                    .add(TokenKind::Reserved('+'), 3, 4)
+                    .add(TokenKind::Number(2), 4, 5)
+                    .build(),
+                raw_input: "-1 * +2",
+                expected: Some(Box::new(ASTNode::new(
+                    ASTNodeKind::Mul,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::Sub,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    ))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ))),
             },
         ];
