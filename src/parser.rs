@@ -1,7 +1,7 @@
 use super::token::Token;
 
 #[derive(Debug, PartialEq, Eq)]
-enum ASTNodeKind {
+pub enum ASTNodeKind {
     Add,
     Sub,
     Mul,
@@ -9,17 +9,17 @@ enum ASTNodeKind {
     Num(i32),
 }
 
-type MaybeASTNode = Option<Box<ASTNode>>;
+pub type MaybeASTNode = Option<Box<ASTNode>>;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ASTNode {
-    kind: ASTNodeKind,
-    lhs: MaybeASTNode,
-    rhs: MaybeASTNode,
+    pub kind: ASTNodeKind,
+    pub lhs: MaybeASTNode,
+    pub rhs: MaybeASTNode,
 }
 
 impl ASTNode {
-    fn new(kind: ASTNodeKind, lhs: MaybeASTNode, rhs: MaybeASTNode) -> ASTNode {
+    pub fn new(kind: ASTNodeKind, lhs: MaybeASTNode, rhs: MaybeASTNode) -> ASTNode {
         ASTNode { kind, lhs, rhs }
     }
 }

@@ -19,5 +19,9 @@ clean:
 .PHONY: generate_asm
 generate_asm:
 	@echo "Generating assembly..."
-	cargo run "20+5"
-	
+	cargo run "2*3+4*8"
+
+.PHONY: check	
+check:
+	orb exec ./build/tmp
+	@echo $?

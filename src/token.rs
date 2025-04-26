@@ -107,7 +107,7 @@ pub fn tokenize(input: &str) -> Token {
                     &input[start..end],
                 )))
             }
-            '+' | '-' => {
+            '+' | '-' | '*' | '/' | '(' | ')' => {
                 chars.next();
                 Some(Box::new(Token::init(
                     TokenKind::Reserved(c),
