@@ -1,38 +1,50 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TokenKind {
-    Reserved(char), // 記号
-    Number(i32),    // 整数トークン
-    Begin,          // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
+pub enum TokenKind<'a> {
+    Reserved(&'a str), // 記号
+    Number(i32),       // 整数トークン
+    Begin,             // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token<'a> {
-    pub kind: TokenKind,              // トークンの型
+    pub kind: TokenKind<'a>,          // トークンの型
     pub next: Option<Box<Token<'a>>>, // 次の入力トークン
     pub input: &'a str, // トークン文字列。エラー出力時等に生の文字列があった方が良いので保持
+    pub len: usize,     // トークンの長さ
 }
 
 impl<'a> Token<'a> {
-    pub fn init(kind: TokenKind, input: &str) -> Token {
+    pub fn init(kind: TokenKind<'a>, input: &'a str) -> Token<'a> {
         Token {
             kind,
             next: None,
             input,
+            len: input.len(),
         }
     }
 
-    pub fn new_token(kind: TokenKind, input: &'a str, next: Option<Box<Token<'a>>>) -> Token<'a> {
-        Token { kind, next, input }
+    pub fn new_token(
+        kind: TokenKind<'a>,
+        input: &'a str,
+        next: Option<Box<Token<'a>>>,
+        len: usize,
+    ) -> Token<'a> {
+        Token {
+            kind,
+            next,
+            input,
+            len,
+        }
     }
 
     /**
      * 現在のトークンが指定された記号かどうか確認する
      * トークンが指定された記号であればトークンを消費して次に進む
      */
-    pub fn consume(token: &mut Option<Box<Token<'a>>>, c: char) -> bool {
+    pub fn consume(token: &mut Option<Box<Token<'a>>>, op: &str) -> bool {
         if let Some(tok) = token {
             if let TokenKind::Reserved(ch) = tok.kind {
-                if ch == c {
+                if ch == op {
                     *token = tok.next.take();
                     return true;
                 }
@@ -64,7 +76,7 @@ impl<'a> Token<'a> {
      * トークンが指定された値でない場合はエラーを出力して終了する
      */
     // TOOO: expect_number といい感じに共通化したい
-    pub fn expect(token: &mut Option<Box<Token<'a>>>, c: char, input: &str) {
+    pub fn expect(token: &mut Option<Box<Token<'a>>>, c: &str, input: &str) {
         if let Some(tok) = token {
             if let TokenKind::Reserved(ch) = tok.kind {
                 if ch == c {
@@ -110,7 +122,7 @@ pub fn tokenize(input: &str) -> Token {
             '+' | '-' | '*' | '/' | '(' | ')' => {
                 chars.next();
                 Some(Box::new(Token::init(
-                    TokenKind::Reserved(c),
+                    TokenKind::Reserved(&input[i..i + 1]),
                     &input[i..i + 1],
                 )))
             }
@@ -167,14 +179,14 @@ mod tests {
     fn test_consume() {
         let cases = vec![
             (
-                Some(Box::new(Token::init(TokenKind::Reserved('+'), "+"))),
+                Some(Box::new(Token::init(TokenKind::Reserved("+"), "+"))),
                 true,
                 None,
             ),
             (
-                Some(Box::new(Token::init(TokenKind::Reserved('-'), "-"))),
+                Some(Box::new(Token::init(TokenKind::Reserved("-"), "-"))),
                 false,
-                Some(Box::new(Token::init(TokenKind::Reserved('-'), "-"))),
+                Some(Box::new(Token::init(TokenKind::Reserved("-"), "-"))),
             ),
             (
                 Some(Box::new(Token::init(TokenKind::Number(1), "1"))),
@@ -184,7 +196,7 @@ mod tests {
         ];
         for (input, expected, next) in cases {
             let mut token = input;
-            let result = Token::consume(&mut token, '+');
+            let result = Token::consume(&mut token, "+");
 
             assert_eq!(result, expected);
             assert_eq!(token, next);
@@ -203,7 +215,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "数値ではありません")]
     fn test_expect_number_should_panic() {
-        let mut token = Some(Box::new(Token::init(TokenKind::Reserved('+'), "+")));
+        let mut token = Some(Box::new(Token::init(TokenKind::Reserved("+"), "+")));
         Token::expect_number(&mut token, "+");
     }
 
@@ -213,24 +225,29 @@ mod tests {
         let result = tokenize(input);
 
         fn new_token<'a>(
-            kind: TokenKind,
+            kind: TokenKind<'a>,
             input: &'a str,
             next: Option<Box<Token<'a>>>,
         ) -> Token<'a> {
-            Token { kind, next, input }
+            Token {
+                kind,
+                next,
+                input,
+                len: input.len(),
+            }
         }
 
         let token = new_token(
             TokenKind::Number(5),
             "5",
             Some(Box::new(new_token(
-                TokenKind::Reserved('+'),
+                TokenKind::Reserved("+"),
                 "+",
                 Some(Box::new(new_token(
                     TokenKind::Number(20),
                     "20",
                     Some(Box::new(new_token(
-                        TokenKind::Reserved('-'),
+                        TokenKind::Reserved("-"),
                         "-",
                         Some(Box::new(Token::init(TokenKind::Number(4), "4"))),
                     ))),

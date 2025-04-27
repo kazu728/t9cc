@@ -34,10 +34,10 @@ pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     let mut node = mul(token, input);
 
     loop {
-        if Token::consume(token, '+') {
+        if Token::consume(token, "+") {
             let rhs = mul(token, input);
             node = Some(Box::new(ASTNode::new(ASTNodeKind::Add, node, rhs)));
-        } else if Token::consume(token, '-') {
+        } else if Token::consume(token, "-") {
             let rhs = mul(token, input);
             node = Some(Box::new(ASTNode::new(ASTNodeKind::Sub, node, rhs)));
         } else {
@@ -53,10 +53,10 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     let mut node = unary(token, input);
 
     loop {
-        if Token::consume(token, '*') {
+        if Token::consume(token, "*") {
             let rhs = unary(token, input);
             node = Some(Box::new(ASTNode::new(ASTNodeKind::Mul, node, rhs)));
-        } else if Token::consume(token, '/') {
+        } else if Token::consume(token, "/") {
             let rhs = unary(token, input);
             node = Some(Box::new(ASTNode::new(ASTNodeKind::Div, node, rhs)));
         } else {
@@ -69,9 +69,9 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
 
 // unary   = ("+" | "-")? primary
 fn unary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
-    if Token::consume(token, '+') {
+    if Token::consume(token, "+") {
         return primary(token, input);
-    } else if Token::consume(token, '-') {
+    } else if Token::consume(token, "-") {
         let node = primary(token, input);
         return Some(Box::new(ASTNode::new(
             ASTNodeKind::Sub,
@@ -84,9 +84,9 @@ fn unary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
 
 // primary = num | "(" expr ")"
 fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
-    if Token::consume(token, '(') {
+    if Token::consume(token, "(") {
         let node = expr(token, input);
-        Token::expect(token, ')', input);
+        Token::expect(token, ")", input);
         return node;
     }
 
@@ -101,7 +101,7 @@ mod tests {
 
     struct TestTokenStream<'a> {
         source: &'a str,
-        tokens: Vec<(TokenKind, usize, usize)>, // 種類、開始位置、終了位置
+        tokens: Vec<(TokenKind<'a>, usize, usize)>, // 種類、開始位置、終了位置
     }
 
     impl<'a> TestTokenStream<'a> {
@@ -112,7 +112,7 @@ mod tests {
             }
         }
 
-        fn add(&mut self, kind: TokenKind, start: usize, end: usize) -> &mut Self {
+        fn add(&mut self, kind: TokenKind<'a>, start: usize, end: usize) -> &mut Self {
             self.tokens.push((kind, start, end));
             self
         }
@@ -153,9 +153,9 @@ mod tests {
             TestCase {
                 token: TestTokenStream::new("1 + 2 * 3")
                     .add(TokenKind::Number(1), 0, 1)
-                    .add(TokenKind::Reserved('+'), 1, 2)
+                    .add(TokenKind::Reserved("+"), 1, 2)
                     .add(TokenKind::Number(2), 3, 4)
-                    .add(TokenKind::Reserved('*'), 4, 5)
+                    .add(TokenKind::Reserved("*"), 4, 5)
                     .add(TokenKind::Number(3), 6, 7)
                     .build(),
                 raw_input: "1 + 2 * 3",
@@ -173,14 +173,14 @@ mod tests {
             TestCase {
                 token: TestTokenStream::new("1*2+(3+4)")
                     .add(TokenKind::Number(1), 0, 1)
-                    .add(TokenKind::Reserved('*'), 1, 2)
+                    .add(TokenKind::Reserved("*"), 1, 2)
                     .add(TokenKind::Number(2), 2, 3)
-                    .add(TokenKind::Reserved('+'), 3, 4)
-                    .add(TokenKind::Reserved('('), 4, 5)
+                    .add(TokenKind::Reserved("+"), 3, 4)
+                    .add(TokenKind::Reserved("("), 4, 5)
                     .add(TokenKind::Number(3), 5, 6)
-                    .add(TokenKind::Reserved('+'), 6, 7)
+                    .add(TokenKind::Reserved("+"), 6, 7)
                     .add(TokenKind::Number(4), 7, 8)
-                    .add(TokenKind::Reserved(')'), 8, 9)
+                    .add(TokenKind::Reserved(")"), 8, 9)
                     .build(),
                 raw_input: "1*2+(3+4)",
                 expected: Some(Box::new(ASTNode::new(
@@ -200,10 +200,10 @@ mod tests {
             // -1 * +2 が正しくparseされること
             TestCase {
                 token: TestTokenStream::new("-1 * +2")
-                    .add(TokenKind::Reserved('-'), 0, 1)
+                    .add(TokenKind::Reserved("-"), 0, 1)
                     .add(TokenKind::Number(1), 1, 2)
-                    .add(TokenKind::Reserved('*'), 2, 3)
-                    .add(TokenKind::Reserved('+'), 3, 4)
+                    .add(TokenKind::Reserved("*"), 2, 3)
+                    .add(TokenKind::Reserved("+"), 3, 4)
                     .add(TokenKind::Number(2), 4, 5)
                     .build(),
                 raw_input: "-1 * +2",
