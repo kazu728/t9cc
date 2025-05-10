@@ -31,6 +31,36 @@ fn gen_stack_insruction_asm(maybe_ast_node: MaybeASTNode, output: &mut String) -
                         ASTNodeKind::Add => output.push_str("  add rax, rdi\n"),
                         ASTNodeKind::Sub => output.push_str("  sub rax, rdi\n"),
                         ASTNodeKind::Mul => output.push_str("  imul rax, rdi\n"),
+                        ASTNodeKind::Equal => {
+                            output.push_str("  cmp rax, rdi\n");
+                            output.push_str("  sete al\n");
+                            output.push_str("  movzb rax, al\n");
+                        }
+                        ASTNodeKind::NotEqual => {
+                            output.push_str("  cmp rax, rdi\n");
+                            output.push_str("  setne al\n");
+                            output.push_str("  movzb rax, al\n");
+                        }
+                        ASTNodeKind::Less => {
+                            output.push_str("  cmp rax, rdi\n");
+                            output.push_str("  setl al\n");
+                            output.push_str("  movzb rax, al\n");
+                        }
+                        ASTNodeKind::LessEqual => {
+                            output.push_str("  cmp rax, rdi\n");
+                            output.push_str("  setle al\n");
+                            output.push_str("  movzb rax, al\n");
+                        }
+                        ASTNodeKind::Greater => {
+                            output.push_str("  cmp rax, rdi\n");
+                            output.push_str("  setg al\n");
+                            output.push_str("  movzb rax, al\n");
+                        }
+                        ASTNodeKind::GreaterEqual => {
+                            output.push_str("  cmp rax, rdi\n");
+                            output.push_str("  setge al\n");
+                            output.push_str("  movzb rax, al\n");
+                        }
                         ASTNodeKind::Div => {
                             output.push_str("  cqo\n");
                             // idivは符号あり除算を行う命令
@@ -130,6 +160,27 @@ mod tests {
                     + "  push 3\n  push 1\n  pop rdi\n  pop rax\n  sub rax, rdi\n  push rax\n"
                     + "  pop rdi\n  pop rax\n  imul rax, rdi\n  push rax\n",
             },
+            TestCase {
+                name: "等価演算子",
+                node: Some(Box::new(ASTNode::new(
+                    ASTNodeKind::Equal,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                ))),
+                expected: "  push 1\n  push 2\n  pop rdi\n  pop rax\n  cmp rax, rdi\n  sete al\n  movzb rax, al\n  push rax\n"
+                    .to_string(),
+            },
+            TestCase {
+                name: "不等価演算子",
+                node: Some(Box::new(ASTNode::new(
+                    ASTNodeKind::NotEqual,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                ))),
+                expected: "  push 1\n  push 2\n  pop rdi\n  pop rax\n  cmp rax, rdi\n  setne al\n  movzb rax, al\n  push rax\n"
+                    .to_string(),
+            },
+            
         ];
 
         for case in test_cases {

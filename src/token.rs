@@ -5,12 +5,14 @@ pub enum TokenKind<'a> {
     Begin,             // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
 }
 
+type MaybeToken<'a> = Option<Box<Token<'a>>>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token<'a> {
-    pub kind: TokenKind<'a>,          // トークンの型
-    pub next: Option<Box<Token<'a>>>, // 次の入力トークン
-    pub input: &'a str, // トークン文字列。エラー出力時等に生の文字列があった方が良いので保持
-    pub len: usize,     // トークンの長さ
+    pub kind: TokenKind<'a>,  // トークンの型
+    pub next: MaybeToken<'a>, // 次の入力トークン
+    pub input: &'a str,       // トークン文字列。エラー出力時等に生の文字列があった方が良いので保持
+    pub len: usize,           // トークンの長さ
 }
 
 impl<'a> Token<'a> {
@@ -26,7 +28,7 @@ impl<'a> Token<'a> {
     pub fn new_token(
         kind: TokenKind<'a>,
         input: &'a str,
-        next: Option<Box<Token<'a>>>,
+        next: MaybeToken<'a>,
         len: usize,
     ) -> Token<'a> {
         Token {
@@ -37,17 +39,19 @@ impl<'a> Token<'a> {
         }
     }
 
+    fn is_valid(&self, op: &str) -> bool {
+        self.kind == TokenKind::Reserved(op) && op.len() == self.len && self.input == op
+    }
+
     /**
      * 現在のトークンが指定された記号かどうか確認する
      * トークンが指定された記号であればトークンを消費して次に進む
      */
-    pub fn consume(token: &mut Option<Box<Token<'a>>>, op: &str) -> bool {
-        if let Some(tok) = token {
-            if let TokenKind::Reserved(ch) = tok.kind {
-                if ch == op {
-                    *token = tok.next.take();
-                    return true;
-                }
+    pub fn consume(maybe_token: &mut MaybeToken<'a>, op: &str) -> bool {
+        if let Some(token) = maybe_token {
+            if token.is_valid(op) {
+                *maybe_token = token.next.take();
+                return true;
             }
         }
         false
@@ -57,7 +61,7 @@ impl<'a> Token<'a> {
      * 次のトークンが数値の場合、トークンを1つ読み進めてその数値を返す
      * トークンが数値でない場合はエラーを出力して終了する
      */
-    pub fn expect_number(token: &mut Option<Box<Token<'a>>>, raw_input: &str) -> i32 {
+    pub fn expect_number(token: &mut MaybeToken<'a>, raw_input: &str) -> i32 {
         if let Some(tok) = token {
             if let TokenKind::Number(n) = tok.kind {
                 *token = tok.next.take();
@@ -76,7 +80,7 @@ impl<'a> Token<'a> {
      * トークンが指定された値でない場合はエラーを出力して終了する
      */
     // TOOO: expect_number といい感じに共通化したい
-    pub fn expect(token: &mut Option<Box<Token<'a>>>, c: &str, input: &str) {
+    pub fn expect(token: &mut MaybeToken<'a>, c: &str, input: &str) {
         if let Some(tok) = token {
             if let TokenKind::Reserved(ch) = tok.kind {
                 if ch == c {
@@ -126,6 +130,67 @@ pub fn tokenize(input: &str) -> Token {
                     &input[i..i + 1],
                 )))
             }
+            '=' => {
+                chars.next();
+                if let Some((_, '=')) = chars.peek() {
+                    chars.next();
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved("=="),
+                        &input[i..i + 2],
+                    )))
+                } else {
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved("="),
+                        &input[i..i + 1],
+                    )))
+                }
+            }
+            '>' => {
+                chars.next();
+                if let Some((_, '=')) = chars.peek() {
+                    chars.next();
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved(">="),
+                        &input[i..i + 2],
+                    )))
+                } else {
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved(">"),
+                        &input[i..i + 1],
+                    )))
+                }
+            }
+            '<' => {
+                chars.next();
+                if let Some((_, '=')) = chars.peek() {
+                    chars.next();
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved("<="),
+                        &input[i..i + 2],
+                    )))
+                } else {
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved("<"),
+                        &input[i..i + 1],
+                    )))
+                }
+            }
+            '!' => {
+                chars.next();
+                if let Some((_, '=')) = chars.peek() {
+                    chars.next();
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved("!="),
+                        &input[i..i + 2],
+                    )))
+                } else {
+                    Some(Box::new(Token::init(
+                        TokenKind::Reserved("!"),
+                        &input[i..i + 1],
+                    )))
+                }
+            }
+
             _ => unimplemented!(),
         };
 
@@ -221,40 +286,53 @@ mod tests {
 
     #[test]
     fn test_tokenize() {
-        let input = "5 + 20 - 4";
-        let result = tokenize(input);
-
-        fn new_token<'a>(
-            kind: TokenKind<'a>,
-            input: &'a str,
-            next: Option<Box<Token<'a>>>,
-        ) -> Token<'a> {
-            Token {
-                kind,
-                next,
-                input,
-                len: input.len(),
-            }
+        fn new_token<'a>(kind: TokenKind<'a>, input: &'a str, next: MaybeToken<'a>) -> Token<'a> {
+            Token::new_token(kind, input, next, input.len())
         }
 
-        let token = new_token(
-            TokenKind::Number(5),
-            "5",
-            Some(Box::new(new_token(
-                TokenKind::Reserved("+"),
-                "+",
-                Some(Box::new(new_token(
-                    TokenKind::Number(20),
-                    "20",
-                    Some(Box::new(new_token(
-                        TokenKind::Reserved("-"),
-                        "-",
-                        Some(Box::new(Token::init(TokenKind::Number(4), "4"))),
-                    ))),
-                ))),
-            ))),
-        );
+        struct TestCase<'a> {
+            input: &'a str,
+            expected: Token<'a>,
+        }
 
-        assert_eq!(result, token);
+        let test_cases = vec![
+            TestCase {
+                input: "5 + 20 - 4",
+                expected: new_token(
+                    TokenKind::Number(5),
+                    "5",
+                    Some(Box::new(new_token(
+                        TokenKind::Reserved("+"),
+                        "+",
+                        Some(Box::new(new_token(
+                            TokenKind::Number(20),
+                            "20",
+                            Some(Box::new(new_token(
+                                TokenKind::Reserved("-"),
+                                "-",
+                                Some(Box::new(Token::init(TokenKind::Number(4), "4"))),
+                            ))),
+                        ))),
+                    ))),
+                ),
+            },
+            TestCase {
+                input: "1 <= 2",
+                expected: new_token(
+                    TokenKind::Number(1),
+                    "1",
+                    Some(Box::new(new_token(
+                        TokenKind::Reserved("<="),
+                        "<=",
+                        Some(Box::new(new_token(TokenKind::Number(2), "2", None))),
+                    ))),
+                ),
+            },
+        ];
+
+        for test_case in test_cases {
+            let result = tokenize(test_case.input);
+            assert_eq!(result, test_case.expected);
+        }
     }
 }

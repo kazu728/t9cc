@@ -7,6 +7,13 @@ pub enum ASTNodeKind {
     Mul,
     Div,
     Num(i32),
+
+    Equal,
+    NotEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -23,14 +30,64 @@ impl ASTNode {
         ASTNode { kind, lhs, rhs }
     }
 }
-
-// expr    = mul ("+" mul | "-" mul)*
-// mul     = unary ("*" unary | "/" unary)*
-// unary   = ("+" | "-")? primary
-// primary = num | "(" expr ")"
+// expr       = equality
+// equality   = relational ("==" relational | "!=" relational)*
+// relational = add ("<" add | "<=" add | ">" add | ">=" add)*
+// add        = mul ("+" mul | "-" mul)*
+// mul        = unary ("*" unary | "/" unary)*
+// unary      = ("+" | "-")? primary
+// primary    = num | "(" expr ")"
 
 // expr = mul ("+" mul | "-" mul)*
+
+// TODO: Some(Box::new(ASTNode::new これの共通化はして良い
 pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+    equality(token, input)
+}
+
+fn equality(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+    let mut node = relational(token, input);
+
+    loop {
+        if Token::consume(token, "==") {
+            let rhs = relational(token, input);
+            node = Some(Box::new(ASTNode::new(ASTNodeKind::Equal, node, rhs)));
+        } else if Token::consume(token, "!=") {
+            let rhs = relational(token, input);
+            node = Some(Box::new(ASTNode::new(ASTNodeKind::NotEqual, node, rhs)));
+        } else {
+            break;
+        }
+    }
+
+    node
+}
+
+fn relational(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+    let mut node = add(token, input);
+
+    loop {
+        if Token::consume(token, "<") {
+            let rhs = add(token, input);
+            node = Some(Box::new(ASTNode::new(ASTNodeKind::Less, node, rhs)));
+        } else if Token::consume(token, "<=") {
+            let rhs = add(token, input);
+            node = Some(Box::new(ASTNode::new(ASTNodeKind::LessEqual, node, rhs)));
+        } else if Token::consume(token, ">") {
+            let rhs = add(token, input);
+            node = Some(Box::new(ASTNode::new(ASTNodeKind::Greater, node, rhs)));
+        } else if Token::consume(token, ">=") {
+            let rhs = add(token, input);
+            node = Some(Box::new(ASTNode::new(ASTNodeKind::GreaterEqual, node, rhs)));
+        } else {
+            break;
+        }
+    }
+
+    node
+}
+
+fn add(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     let mut node = mul(token, input);
 
     loop {
@@ -151,12 +208,12 @@ mod tests {
             },
             // 1 + 2 * 3 が正しくparseされること
             TestCase {
-                token: TestTokenStream::new("1 + 2 * 3")
+                token: TestTokenStream::new("1+2*3")
                     .add(TokenKind::Number(1), 0, 1)
                     .add(TokenKind::Reserved("+"), 1, 2)
-                    .add(TokenKind::Number(2), 3, 4)
-                    .add(TokenKind::Reserved("*"), 4, 5)
-                    .add(TokenKind::Number(3), 6, 7)
+                    .add(TokenKind::Number(2), 2, 3)
+                    .add(TokenKind::Reserved("*"), 3, 4)
+                    .add(TokenKind::Number(3), 4, 5)
                     .build(),
                 raw_input: "1 + 2 * 3",
                 expected: Some(Box::new(ASTNode::new(
@@ -199,7 +256,7 @@ mod tests {
             },
             // -1 * +2 が正しくparseされること
             TestCase {
-                token: TestTokenStream::new("-1 * +2")
+                token: TestTokenStream::new("-1*+2")
                     .add(TokenKind::Reserved("-"), 0, 1)
                     .add(TokenKind::Number(1), 1, 2)
                     .add(TokenKind::Reserved("*"), 2, 3)
@@ -214,6 +271,20 @@ mod tests {
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     ))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                ))),
+            },
+            // 1 <= 2 が正しくparseされること
+            TestCase {
+                token: TestTokenStream::new("1<=2")
+                    .add(TokenKind::Number(1), 0, 1)
+                    .add(TokenKind::Reserved("<="), 1, 3)
+                    .add(TokenKind::Number(2), 3, 4)
+                    .build(),
+                raw_input: "1 <= 2",
+                expected: Some(Box::new(ASTNode::new(
+                    ASTNodeKind::LessEqual,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ))),
             },
