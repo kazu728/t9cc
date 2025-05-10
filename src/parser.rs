@@ -29,6 +29,9 @@ impl ASTNode {
     pub fn new(kind: ASTNodeKind, lhs: MaybeASTNode, rhs: MaybeASTNode) -> ASTNode {
         ASTNode { kind, lhs, rhs }
     }
+    pub fn new_meybe_node(kind: ASTNodeKind, lhs: MaybeASTNode, rhs: MaybeASTNode) -> MaybeASTNode {
+        Some(Box::new(ASTNode { kind, lhs, rhs }))
+    }
 }
 // expr       = equality
 // equality   = relational ("==" relational | "!=" relational)*
@@ -51,10 +54,10 @@ fn equality(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     loop {
         if Token::consume(token, "==") {
             let rhs = relational(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Equal, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Equal, node, rhs);
         } else if Token::consume(token, "!=") {
             let rhs = relational(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::NotEqual, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::NotEqual, node, rhs);
         } else {
             break;
         }
@@ -69,16 +72,16 @@ fn relational(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     loop {
         if Token::consume(token, "<") {
             let rhs = add(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Less, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Less, node, rhs);
         } else if Token::consume(token, "<=") {
             let rhs = add(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::LessEqual, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::LessEqual, node, rhs);
         } else if Token::consume(token, ">") {
             let rhs = add(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Greater, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Greater, node, rhs);
         } else if Token::consume(token, ">=") {
             let rhs = add(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::GreaterEqual, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::GreaterEqual, node, rhs);
         } else {
             break;
         }
@@ -93,10 +96,10 @@ fn add(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     loop {
         if Token::consume(token, "+") {
             let rhs = mul(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Add, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Add, node, rhs);
         } else if Token::consume(token, "-") {
             let rhs = mul(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Sub, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Sub, node, rhs);
         } else {
             break;
         }
@@ -112,10 +115,10 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     loop {
         if Token::consume(token, "*") {
             let rhs = unary(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Mul, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Mul, node, rhs);
         } else if Token::consume(token, "/") {
             let rhs = unary(token, input);
-            node = Some(Box::new(ASTNode::new(ASTNodeKind::Div, node, rhs)));
+            node = ASTNode::new_meybe_node(ASTNodeKind::Div, node, rhs);
         } else {
             break;
         }
@@ -148,7 +151,7 @@ fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     }
 
     let num = Token::expect_number(token, input);
-    Some(Box::new(ASTNode::new(ASTNodeKind::Num(num), None, None)))
+    ASTNode::new_meybe_node(ASTNodeKind::Num(num), None, None)
 }
 
 #[cfg(test)]

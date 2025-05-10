@@ -108,89 +108,14 @@ pub fn tokenize(input: &str) -> Token {
         }
 
         let next_token = match c {
-            '0'..='9' => {
-                let start = i;
-                while let Some((_, c)) = chars.peek() {
-                    if c.is_ascii_digit() {
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                let end = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
-                Some(Box::new(Token::init(
-                    TokenKind::Number(input[start..end].parse().unwrap()),
-                    &input[start..end],
-                )))
-            }
+            '0'..='9' => parse_number(&mut chars, input, i),
             '+' | '-' | '*' | '/' | '(' | ')' => {
-                chars.next();
-                Some(Box::new(Token::init(
-                    TokenKind::Reserved(&input[i..i + 1]),
-                    &input[i..i + 1],
-                )))
+                parse_single_char_op(&mut chars, input, i, &input[i..i + 1])
             }
-            '=' => {
-                chars.next();
-                if let Some((_, '=')) = chars.peek() {
-                    chars.next();
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved("=="),
-                        &input[i..i + 2],
-                    )))
-                } else {
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved("="),
-                        &input[i..i + 1],
-                    )))
-                }
-            }
-            '>' => {
-                chars.next();
-                if let Some((_, '=')) = chars.peek() {
-                    chars.next();
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved(">="),
-                        &input[i..i + 2],
-                    )))
-                } else {
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved(">"),
-                        &input[i..i + 1],
-                    )))
-                }
-            }
-            '<' => {
-                chars.next();
-                if let Some((_, '=')) = chars.peek() {
-                    chars.next();
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved("<="),
-                        &input[i..i + 2],
-                    )))
-                } else {
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved("<"),
-                        &input[i..i + 1],
-                    )))
-                }
-            }
-            '!' => {
-                chars.next();
-                if let Some((_, '=')) = chars.peek() {
-                    chars.next();
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved("!="),
-                        &input[i..i + 2],
-                    )))
-                } else {
-                    Some(Box::new(Token::init(
-                        TokenKind::Reserved("!"),
-                        &input[i..i + 1],
-                    )))
-                }
-            }
-
+            '=' => parse_multiple_char_op(&mut chars, input, i, "=", "=="),
+            '>' => parse_multiple_char_op(&mut chars, input, i, ">", ">="),
+            '<' => parse_multiple_char_op(&mut chars, input, i, "<", "<="),
+            '!' => parse_multiple_char_op(&mut chars, input, i, "!", "!="),
             _ => unimplemented!(),
         };
 
@@ -201,6 +126,61 @@ pub fn tokenize(input: &str) -> Token {
     *head.next.take().unwrap()
 }
 
+fn parse_number<'a>(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
+    input: &'a str,
+    i: usize,
+) -> MaybeToken<'a> {
+    let start = i;
+    while let Some((_, c)) = chars.peek() {
+        if c.is_ascii_digit() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    let end = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
+    Some(Box::new(Token::init(
+        TokenKind::Number(input[start..end].parse().unwrap()),
+        &input[start..end],
+    )))
+}
+
+fn parse_single_char_op<'a>(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
+    input: &'a str,
+    i: usize,
+    op: &'a str,
+) -> MaybeToken<'a> {
+    chars.next();
+    Some(Box::new(Token::init(
+        TokenKind::Reserved(op),
+        &input[i..i + 1],
+    )))
+}
+
+fn parse_multiple_char_op<'a>(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
+    input: &'a str,
+    i: usize,
+    single: &'a str,
+    double: &'a str,
+) -> MaybeToken<'a> {
+    chars.next();
+    if let Some((_, '=')) = chars.peek() {
+        chars.next();
+        Some(Box::new(Token::init(
+            TokenKind::Reserved(double),
+            &input[i..i + 2],
+        )))
+    } else {
+        Some(Box::new(Token::init(
+            TokenKind::Reserved(single),
+            &input[i..i + 1],
+        )))
+    }
+}
+
 fn error_at(loc: &str, input: &str, message: &str) {
     let pos_bytes = loc.as_ptr() as usize - input.as_ptr() as usize;
     let pos_chars = input[..pos_bytes].chars().count();
@@ -209,30 +189,6 @@ fn error_at(loc: &str, input: &str, message: &str) {
     eprintln!("{:>1$}", "^", pos_chars + 1);
 
     panic!("{}", message);
-}
-
-/**
- * 次のトークンが数値の場合、トークンを1つ読み進めてその数値を返す
- * トークンが数値でない場合はエラーを出力して終了する
- */
-pub fn expect_number(current_token: &mut Token, raw_input: &str) -> i32 {
-    // TODO: ファイル分割するあたりでResult返すように修正したい
-    match current_token.next {
-        Some(ref mut token) => match token.kind {
-            TokenKind::Number(n) => {
-                current_token.next = token.next.take();
-                n
-            }
-            _ => {
-                error_at(&current_token.input, raw_input, "数値ではありません");
-                std::process::exit(1);
-            }
-        },
-        None => {
-            error_at(&current_token.input, raw_input, "数値ではありません");
-            std::process::exit(1);
-        }
-    }
 }
 
 #[cfg(test)]
