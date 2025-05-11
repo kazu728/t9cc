@@ -1,8 +1,9 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TokenKind<'a> {
-    Reserved(&'a str), // 記号
-    Number(i32),       // 整数トークン
-    Begin,             // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
+    Reserved(&'a str),   // 記号
+    Number(i32),         // 整数トークン
+    Begin,               // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
+    Identifier(&'a str), // 識別子
 }
 
 type MaybeToken<'a> = Option<Box<Token<'a>>>;
@@ -109,6 +110,7 @@ pub fn tokenize(input: &str) -> Token {
 
         let next_token = match c {
             '0'..='9' => parse_number(&mut chars, input, i),
+            'a'..='z' | 'A'..='Z' => parse_identifier(&mut chars, input, i),
             '+' | '-' | '*' | '/' | '(' | ')' => {
                 parse_single_char_op(&mut chars, input, i, &input[i..i + 1])
             }
@@ -142,6 +144,27 @@ fn parse_number<'a>(
     let end = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
     Some(Box::new(Token::init(
         TokenKind::Number(input[start..end].parse().unwrap()),
+        &input[start..end],
+    )))
+}
+
+fn parse_identifier<'a>(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
+    input: &'a str,
+    i: usize,
+) -> MaybeToken<'a> {
+    chars.next();
+    let start = i;
+    while let Some((_, c)) = chars.peek() {
+        if c.is_ascii_alphanumeric() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    let end = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
+    Some(Box::new(Token::init(
+        TokenKind::Identifier(&input[start..end]),
         &input[start..end],
     )))
 }
