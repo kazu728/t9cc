@@ -1,9 +1,11 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+const INITIAL_IDENTIFIER_OFFSET: u32 = 8;
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind<'a> {
-    Reserved(&'a str),   // 記号
-    Number(i32),         // 整数トークン
-    Begin,               // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
-    Identifier(&'a str), // 識別子
+    Reserved(&'a str),             // 記号
+    Number(i32),                   // 整数トークン
+    Begin, // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
+    Identifier(LocalVariable<'a>), // 識別子
 }
 
 type MaybeToken<'a> = Option<Box<Token<'a>>>;
@@ -16,7 +18,38 @@ pub struct Token<'a> {
     pub len: usize,           // トークンの長さ
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalVariable<'a> {
+    next: Option<Box<LocalVariable<'a>>>,
+    name: &'a str,
+    offset: u32,
+    len: usize,
+}
+
+impl<'a> LocalVariable<'a> {
+    pub fn new(name: &'a str, offset: u32) -> LocalVariable<'a> {
+        LocalVariable {
+            next: None,
+            name,
+            offset,
+            len: name.len(),
+        }
+    }
+    pub fn get_offset(&self) -> u32 {
+        self.offset
+    }
+}
+
 impl<'a> Token<'a> {
+    pub fn new(kind: TokenKind<'a>, input: &'a str, next: MaybeToken<'a>) -> Token<'a> {
+        Token {
+            kind,
+            next,
+            input,
+            len: input.len(),
+        }
+    }
+
     pub fn init(kind: TokenKind<'a>, input: &'a str) -> Token<'a> {
         Token {
             kind,
@@ -26,19 +59,23 @@ impl<'a> Token<'a> {
         }
     }
 
-    pub fn new_token(
-        kind: TokenKind<'a>,
-        input: &'a str,
-        next: MaybeToken<'a>,
-        len: usize,
-    ) -> Token<'a> {
-        Token {
-            kind,
-            next,
-            input,
-            len,
-        }
+    pub fn new_maybe_token(kind: TokenKind<'a>, input: &'a str) -> MaybeToken<'a> {
+        Some(Box::new(Token::init(kind, input)))
     }
+
+    // pub fn new_token(
+    //     kind: TokenKind<'a>,
+    //     input: &'a str,
+    //     next: MaybeToken<'a>,
+    //     len: usize,
+    // ) -> Token<'a> {
+    //     Token {
+    //         kind,
+    //         next,
+    //         input,
+    //         len,
+    //     }
+    // }
 
     fn is_valid(&self, op: &str) -> bool {
         self.kind == TokenKind::Reserved(op) && op.len() == self.len && self.input == op
@@ -96,111 +133,132 @@ impl<'a> Token<'a> {
     }
 }
 
-pub fn tokenize(input: &str) -> Token {
-    let mut head = Token::init(TokenKind::Begin, "");
-    let mut current = &mut head;
+pub struct Tokenizer<'a> {
+    input: &'a str,
+    chars: std::iter::Peekable<std::str::CharIndices<'a>>,
+    variable_environment: Vec<(&'a str, u32)>, // (変数名, オフセット)のペア
+    next_offset: u32,
+}
 
-    let mut chars = input.char_indices().peekable();
+impl<'a> Tokenizer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        Tokenizer {
+            input,
+            chars: input.char_indices().peekable(),
+            variable_environment: Vec::new(),
+            next_offset: INITIAL_IDENTIFIER_OFFSET,
+        }
+    }
 
-    while let Some((i, c)) = chars.peek().copied() {
-        if c.is_whitespace() {
-            chars.next();
-            continue;
+    pub fn tokenize(&mut self) -> Token<'a> {
+        let mut head = Token::init(TokenKind::Begin, "");
+        let mut current = &mut head;
+
+        while let Some((i, c)) = self.chars.peek().copied() {
+            if c.is_whitespace() {
+                self.chars.next();
+                continue;
+            }
+
+            let next_token = match c {
+                '0'..='9' => self.parse_number(i),
+                'a'..='z' | 'A'..='Z' => self.parse_identifier(i),
+                '+' | '-' | '*' | '/' | '(' | ')' => {
+                    self.parse_single_char_op(i, &self.input[i..i + 1])
+                }
+                '=' => self.parse_multiple_char_op(i, "=", "=="),
+                '>' => self.parse_multiple_char_op(i, ">", ">="),
+                '<' => self.parse_multiple_char_op(i, "<", "<="),
+                '!' => self.parse_multiple_char_op(i, "!", "!="),
+                _ => unimplemented!("未実装のトークン: '{}'", c),
+            };
+
+            current.next = next_token;
+            current = current.next.as_mut().unwrap();
         }
 
-        let next_token = match c {
-            '0'..='9' => parse_number(&mut chars, input, i),
-            'a'..='z' | 'A'..='Z' => parse_identifier(&mut chars, input, i),
-            '+' | '-' | '*' | '/' | '(' | ')' => {
-                parse_single_char_op(&mut chars, input, i, &input[i..i + 1])
+        *head.next.take().unwrap()
+    }
+
+    fn parse_number(&mut self, i: usize) -> MaybeToken<'a> {
+        let start = i;
+        while let Some((_, c)) = self.chars.peek() {
+            if c.is_ascii_digit() {
+                self.chars.next();
+            } else {
+                break;
             }
-            '=' => parse_multiple_char_op(&mut chars, input, i, "=", "=="),
-            '>' => parse_multiple_char_op(&mut chars, input, i, ">", ">="),
-            '<' => parse_multiple_char_op(&mut chars, input, i, "<", "<="),
-            '!' => parse_multiple_char_op(&mut chars, input, i, "!", "!="),
-            _ => unimplemented!(),
+        }
+        let end = self
+            .chars
+            .peek()
+            .map(|(i, _)| *i)
+            .unwrap_or(self.input.len());
+        Token::new_maybe_token(
+            TokenKind::Number(self.input[start..end].parse().unwrap()),
+            &self.input[start..end],
+        )
+    }
+
+    fn parse_identifier(&mut self, i: usize) -> MaybeToken<'a> {
+        self.chars.next();
+        let start = i;
+        while let Some((_, c)) = self.chars.peek() {
+            if c.is_ascii_alphanumeric() {
+                self.chars.next();
+            } else {
+                break;
+            }
+        }
+        let end = self
+            .chars
+            .peek()
+            .map(|(i, _)| *i)
+            .unwrap_or(self.input.len());
+
+        let name = &self.input[start..end];
+
+        let offset = if let Some(existing_offset) = self.find_variable(name) {
+            existing_offset
+        } else {
+            let new_offset = self.next_offset;
+            self.variable_environment.push((name, new_offset));
+            self.next_offset += 8;
+            new_offset
         };
 
-        current.next = next_token;
-        current = current.next.as_mut().unwrap();
+        Token::new_maybe_token(
+            TokenKind::Identifier(LocalVariable::new(name, offset)),
+            name,
+        )
     }
 
-    *head.next.take().unwrap()
-}
+    fn find_variable(&self, name: &str) -> Option<u32> {
+        self.variable_environment
+            .iter()
+            .find(|(var_name, _)| *var_name == name)
+            .map(|(_, offset)| *offset)
+    }
 
-fn parse_number<'a>(
-    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
-    input: &'a str,
-    i: usize,
-) -> MaybeToken<'a> {
-    let start = i;
-    while let Some((_, c)) = chars.peek() {
-        if c.is_ascii_digit() {
-            chars.next();
+    fn parse_single_char_op(&mut self, i: usize, op: &'a str) -> MaybeToken<'a> {
+        self.chars.next();
+
+        Token::new_maybe_token(TokenKind::Reserved(op), &self.input[i..i + 1])
+    }
+
+    fn parse_multiple_char_op(
+        &mut self,
+        i: usize,
+        single: &'a str,
+        double: &'a str,
+    ) -> MaybeToken<'a> {
+        self.chars.next();
+        if let Some((_, '=')) = self.chars.peek() {
+            self.chars.next();
+            Token::new_maybe_token(TokenKind::Reserved(double), &self.input[i..i + 2])
         } else {
-            break;
+            Token::new_maybe_token(TokenKind::Reserved(single), &self.input[i..i + 1])
         }
-    }
-    let end = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
-    Some(Box::new(Token::init(
-        TokenKind::Number(input[start..end].parse().unwrap()),
-        &input[start..end],
-    )))
-}
-
-fn parse_identifier<'a>(
-    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
-    input: &'a str,
-    i: usize,
-) -> MaybeToken<'a> {
-    chars.next();
-    let start = i;
-    while let Some((_, c)) = chars.peek() {
-        if c.is_ascii_alphanumeric() {
-            chars.next();
-        } else {
-            break;
-        }
-    }
-    let end = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
-    Some(Box::new(Token::init(
-        TokenKind::Identifier(&input[start..end]),
-        &input[start..end],
-    )))
-}
-
-fn parse_single_char_op<'a>(
-    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
-    input: &'a str,
-    i: usize,
-    op: &'a str,
-) -> MaybeToken<'a> {
-    chars.next();
-    Some(Box::new(Token::init(
-        TokenKind::Reserved(op),
-        &input[i..i + 1],
-    )))
-}
-
-fn parse_multiple_char_op<'a>(
-    chars: &mut std::iter::Peekable<std::str::CharIndices<'a>>,
-    input: &'a str,
-    i: usize,
-    single: &'a str,
-    double: &'a str,
-) -> MaybeToken<'a> {
-    chars.next();
-    if let Some((_, '=')) = chars.peek() {
-        chars.next();
-        Some(Box::new(Token::init(
-            TokenKind::Reserved(double),
-            &input[i..i + 2],
-        )))
-    } else {
-        Some(Box::new(Token::init(
-            TokenKind::Reserved(single),
-            &input[i..i + 1],
-        )))
     }
 }
 
@@ -219,23 +277,24 @@ mod tests {
 
     use super::*;
 
+
     #[test]
     fn test_consume() {
         let cases = vec![
             (
-                Some(Box::new(Token::init(TokenKind::Reserved("+"), "+"))),
+                Token::new_maybe_token(TokenKind::Reserved("+"), "+"),
                 true,
                 None,
             ),
             (
-                Some(Box::new(Token::init(TokenKind::Reserved("-"), "-"))),
+                Token::new_maybe_token(TokenKind::Reserved("-"), "-"),
                 false,
-                Some(Box::new(Token::init(TokenKind::Reserved("-"), "-"))),
+                Token::new_maybe_token(TokenKind::Reserved("-"), "-"),
             ),
             (
-                Some(Box::new(Token::init(TokenKind::Number(1), "1"))),
+                Token::new_maybe_token(TokenKind::Number(1), "1"),
                 false,
-                Some(Box::new(Token::init(TokenKind::Number(1), "1"))),
+                Token::new_maybe_token(TokenKind::Number(1), "1"),
             ),
         ];
         for (input, expected, next) in cases {
@@ -249,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_expect_number() {
-        let mut token = Some(Box::new(Token::init(TokenKind::Number(1), "1")));
+        let mut token = Token::new_maybe_token(TokenKind::Number(1), "1");
 
         let result = Token::expect_number(&mut token, "1");
         assert_eq!(result, 1);
@@ -259,16 +318,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "数値ではありません")]
     fn test_expect_number_should_panic() {
-        let mut token = Some(Box::new(Token::init(TokenKind::Reserved("+"), "+")));
+        let mut token = Token::new_maybe_token(TokenKind::Reserved("+"), "+");
         Token::expect_number(&mut token, "+");
     }
 
     #[test]
     fn test_tokenize() {
-        fn new_token<'a>(kind: TokenKind<'a>, input: &'a str, next: MaybeToken<'a>) -> Token<'a> {
-            Token::new_token(kind, input, next, input.len())
-        }
-
         struct TestCase<'a> {
             input: &'a str,
             expected: Token<'a>,
@@ -277,16 +332,16 @@ mod tests {
         let test_cases = vec![
             TestCase {
                 input: "5 + 20 - 4",
-                expected: new_token(
+                expected: Token::new(
                     TokenKind::Number(5),
                     "5",
-                    Some(Box::new(new_token(
+                    Some(Box::new(Token::new(
                         TokenKind::Reserved("+"),
                         "+",
-                        Some(Box::new(new_token(
+                        Some(Box::new(Token::new(
                             TokenKind::Number(20),
                             "20",
-                            Some(Box::new(new_token(
+                            Some(Box::new(Token::new(
                                 TokenKind::Reserved("-"),
                                 "-",
                                 Some(Box::new(Token::init(TokenKind::Number(4), "4"))),
@@ -297,21 +352,110 @@ mod tests {
             },
             TestCase {
                 input: "1 <= 2",
-                expected: new_token(
+                expected: Token::new(
                     TokenKind::Number(1),
                     "1",
-                    Some(Box::new(new_token(
+                    Some(Box::new(Token::new(
                         TokenKind::Reserved("<="),
                         "<=",
-                        Some(Box::new(new_token(TokenKind::Number(2), "2", None))),
+                        Some(Box::new(Token::new(TokenKind::Number(2), "2", None))),
                     ))),
                 ),
             },
+            TestCase {
+                input: "var1 + var2",
+                expected: Token::new(
+                    TokenKind::Identifier(LocalVariable::new("var1", 8)),
+                    "var1",
+                    Some(Box::new(Token::new(
+                        TokenKind::Reserved("+"),
+                        "+",
+                        Some(Box::new(Token::new(
+                            TokenKind::Identifier(LocalVariable::new("var2", 16)),
+                            "var2",
+                            None,
+                        ))),
+                    ))),
+                ),
+            },
+            // TestCase {
+            //     input: "a = 1; a = 2",
+            //     expected: new_token(
+            //         TokenKind::Identifier(LocalVariable::new("a", 8)),
+            //         "a",
+            //         Some(Box::new(new_token(
+            //             TokenKind::Reserved("="),
+            //             "=",
+            //             Some(Box::new(new_token(
+            //                 TokenKind::Number(1),
+            //                 "1",
+            //                 Some(Box::new(new_token(
+            //                     TokenKind::Reserved(";"),
+            //                     ";",
+            //                     Some(Box::new(Token::new(
+            //                         TokenKind::Identifier(LocalVariable::new("a", 8)), // 同じオフセット
+            //                         "a",
+            //                         Some(Box::new(Token::new(
+            //                             TokenKind::Reserved("="),
+            //                             "=",
+            //                             Some(Box::new(Token::new(TokenKind::Number(2), "2", None))),
+            //                         ))),
+            //                     ))),
+            //                 ))),
+            //             ))),
+            //         ))),
+            //     ),
+            // },
         ];
 
         for test_case in test_cases {
-            let result = tokenize(test_case.input);
+            let mut tokenizer = Tokenizer::new(test_case.input);
+            let result = tokenizer.tokenize();
+
             assert_eq!(result, test_case.expected);
         }
+    }
+
+    #[test]
+    fn test_parse_number() {
+        let mut tokenizer = Tokenizer::new("123");
+        let result = tokenizer.parse_number(0);
+
+        assert_eq!(
+            result,
+            Some(Box::new(Token::init(TokenKind::Number(123), "123")))
+        );
+    }
+
+    #[test]
+    fn test_parse_identifier() {
+        let mut tokenizer = Tokenizer::new("var1 var2");
+        let result = tokenizer.parse_identifier(0);
+
+        let expected =
+            Token::new_maybe_token(TokenKind::Identifier(LocalVariable::new("var1", 8)), "var1");
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_parse_single_char_op() {
+        let mut tokenizer = Tokenizer::new("+");
+        let result = tokenizer.parse_single_char_op(0, "+");
+        assert_eq!(
+            result,
+            Token::new_maybe_token(TokenKind::Reserved("+"), "+")
+        );
+    }
+
+    #[test]
+    fn test_parse_multiple_char_op() {
+        let mut tokenizer = Tokenizer::new("==");
+        let result = tokenizer.parse_multiple_char_op(0, "=", "==");
+
+        assert_eq!(
+            result,
+            Token::new_maybe_token(TokenKind::Reserved("=="), "==")
+        );
     }
 }

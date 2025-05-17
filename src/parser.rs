@@ -1,4 +1,4 @@
-use super::token::{Token, TokenKind};
+use super::token::{LocalVariable, Token, TokenKind};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ASTNodeKind {
@@ -16,7 +16,16 @@ pub enum ASTNodeKind {
     LessEqual,
 
     LocalVariable(u32), // ローカル変数のベースポインタからのオフセット,
+    LVar(LVar),
     Assign,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct LVar {
+    next: Option<Box<LVar>>, // 次の変数
+    name: String,            // 変数名
+    offset: u32,             // RBPからのオフセット
+    len: usize,              // 長さ
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -185,16 +194,16 @@ fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
         return node;
     }
 
-    if let Some(t) = token {
+    if let Some(t) = token.take() {
         match t.kind {
             TokenKind::Number(num) => {
-                *token = t.next.clone();
+                *token = t.next;
                 return ASTNode::new_meybe_node(ASTNodeKind::Num(num), None, None);
             }
-            TokenKind::Identifier(id) => {
-                *token = t.next.clone();
+            TokenKind::Identifier(var) => {
+                *token = t.next;
                 return ASTNode::new_meybe_node(
-                    ASTNodeKind::LocalVariable(calculate_offset(id)),
+                    ASTNodeKind::LocalVariable(var.get_offset()),
                     None,
                     None,
                 );
@@ -204,16 +213,6 @@ fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     }
 
     unreachable!("unexpected token: {:?}", token)
-}
-
-fn calculate_offset(input: &str) -> u32 {
-    let mut offset = 0;
-    for ch in input.chars() {
-        if ch.is_alphabetic() {
-            offset += (ch as u8 - b'a' + 1) as u32 * 8;
-        }
-    }
-    offset
 }
 
 #[cfg(test)]
@@ -245,7 +244,7 @@ mod tests {
 
             for (kind, start, end) in &self.tokens {
                 let fragment = &self.source[*start..*end];
-                let new_token = Some(Box::new(Token::init(*kind, fragment)));
+                let new_token = Some(Box::new(Token::init(kind.clone(), fragment)));
                 *current = new_token;
 
                 if let Some(ref mut token) = *current {
@@ -409,10 +408,13 @@ mod tests {
             },
             TestCase {
                 name: "識別子が正しくparseされること",
-                token: Some(Box::new(Token::init(TokenKind::Identifier("x"), "x"))),
+                token: Some(Box::new(Token::init(
+                    TokenKind::Identifier(LocalVariable::new("x", 0)),
+                    "x",
+                ))),
                 raw_input: "x",
                 expected: Some(Box::new(ASTNode::new(
-                    ASTNodeKind::LocalVariable(calculate_offset("x")),
+                    ASTNodeKind::LocalVariable(0),
                     None,
                     None,
                 ))),
@@ -501,7 +503,7 @@ mod tests {
         let test_cases = vec![TestCase {
             name: "x = 1 が正しくparseされること",
             token: TestTokenStream::new("x=1")
-                .add(TokenKind::Identifier("x"), 0, 1)
+                .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
                 .add(TokenKind::Reserved("="), 1, 2)
                 .add(TokenKind::Number(1), 2, 3)
                 .build(),
@@ -509,7 +511,7 @@ mod tests {
             expected: Some(Box::new(ASTNode::new(
                 ASTNodeKind::Assign,
                 Some(Box::new(ASTNode::new(
-                    ASTNodeKind::LocalVariable(calculate_offset("x")),
+                    ASTNodeKind::LocalVariable(0),
                     None,
                     None,
                 ))),
@@ -528,7 +530,7 @@ mod tests {
         let test_cases = vec![TestCase {
             name: "x = 1; が正しくparseされること",
             token: TestTokenStream::new("x=1;")
-                .add(TokenKind::Identifier("x"), 0, 1)
+                .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
                 .add(TokenKind::Reserved("="), 1, 2)
                 .add(TokenKind::Number(1), 2, 3)
                 .add(TokenKind::Reserved(";"), 3, 4)
@@ -537,7 +539,7 @@ mod tests {
             expected: Some(Box::new(ASTNode::new(
                 ASTNodeKind::Assign,
                 Some(Box::new(ASTNode::new(
-                    ASTNodeKind::LocalVariable(calculate_offset("x")),
+                    ASTNodeKind::LocalVariable(0),
                     None,
                     None,
                 ))),
@@ -563,11 +565,11 @@ mod tests {
         let test_cases = vec![ProgramTestCase {
             name: "x = 1; y = 2; が正しくparseされること",
             token: TestTokenStream::new("x=1;y=2;")
-                .add(TokenKind::Identifier("x"), 0, 1)
+                .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
                 .add(TokenKind::Reserved("="), 1, 2)
                 .add(TokenKind::Number(1), 2, 3)
                 .add(TokenKind::Reserved(";"), 3, 4)
-                .add(TokenKind::Identifier("y"), 4, 5)
+                .add(TokenKind::Identifier(LocalVariable::new("y", 0)), 4, 5)
                 .add(TokenKind::Reserved("="), 5, 6)
                 .add(TokenKind::Number(2), 6, 7)
                 .add(TokenKind::Reserved(";"), 7, 8)
@@ -577,7 +579,7 @@ mod tests {
                 Some(Box::new(ASTNode::new(
                     ASTNodeKind::Assign,
                     Some(Box::new(ASTNode::new(
-                        ASTNodeKind::LocalVariable(calculate_offset("x")),
+                        ASTNodeKind::LocalVariable(0),
                         None,
                         None,
                     ))),
@@ -586,7 +588,7 @@ mod tests {
                 Some(Box::new(ASTNode::new(
                     ASTNodeKind::Assign,
                     Some(Box::new(ASTNode::new(
-                        ASTNodeKind::LocalVariable(calculate_offset("y")),
+                        ASTNodeKind::LocalVariable(0),
                         None,
                         None,
                     ))),
@@ -599,23 +601,6 @@ mod tests {
             let mut token = case.token;
             let result = program(&mut token, case.raw_input);
             assert_eq!(result, case.expected, "{}", case.name);
-        }
-    }
-
-    #[test]
-    fn test_calculate_offset() {
-        let test_cases = vec![
-            ("a", 8),
-            ("b", 16),
-            ("c", 24),
-            ("x", 192),
-            ("y", 200),
-            ("z", 208),
-        ];
-
-        for (input, expected) in test_cases {
-            let result = calculate_offset(input);
-            assert_eq!(result, expected);
         }
     }
 }

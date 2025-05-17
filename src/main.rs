@@ -1,5 +1,7 @@
 use std::io::Write;
-use t9cc::{asm_generator::gen_asm, parser::expr, token::tokenize};
+use t9cc::asm_generator::gen_asm;
+use t9cc::parser::program;
+use t9cc::token::Tokenizer;
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
@@ -9,12 +11,29 @@ fn main() {
         std::process::exit(1);
     }
     let input = args[1].as_str();
-    let token = tokenize(input);
-    let node = expr(&mut Some(Box::new(token)), input);
+    let token = Tokenizer::new(input).tokenize();
 
-    let asm = gen_asm(node);
+    let programs = program(&mut Some(Box::new(token)), input);
 
-    write_asm("build/tmp.s", asm).unwrap();
+    let mut output = String::new();
+
+    output.push_str(".intel_syntax noprefix\n");
+    output.push_str(".global main\n");
+    output.push_str("main:\n");
+
+    output.push_str("  push rbp\n");
+    output.push_str("  mov rbp, rsp\n");
+    output.push_str("  sub rsp, 208\n");
+
+    for program in programs {
+        gen_asm(program, &mut output);
+    }
+
+    output.push_str("  mov rsp, rbp\n");
+    output.push_str("  pop rbp\n");
+    output.push_str("  ret\n");
+
+    write_asm("build/tmp.s", output).unwrap();
 }
 
 fn write_asm(path: &str, asm: String) -> Result<(), std::io::Error> {
