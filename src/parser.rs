@@ -1,4 +1,4 @@
-use super::token::{LocalVariable, Token, TokenKind};
+use super::token::{Token, TokenKind};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ASTNodeKind {
@@ -16,16 +16,7 @@ pub enum ASTNodeKind {
     LessEqual,
 
     LocalVariable(u32), // ローカル変数のベースポインタからのオフセット,
-    LVar(LVar),
     Assign,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct LVar {
-    next: Option<Box<LVar>>, // 次の変数
-    name: String,            // 変数名
-    offset: u32,             // RBPからのオフセット
-    len: usize,              // 長さ
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -41,8 +32,25 @@ impl ASTNode {
     pub fn new(kind: ASTNodeKind, lhs: MaybeASTNode, rhs: MaybeASTNode) -> ASTNode {
         ASTNode { kind, lhs, rhs }
     }
-    pub fn new_meybe_node(kind: ASTNodeKind, lhs: MaybeASTNode, rhs: MaybeASTNode) -> MaybeASTNode {
-        Some(Box::new(ASTNode { kind, lhs, rhs }))
+
+    pub fn new_boxed(
+        kind: ASTNodeKind,
+        lhs: Option<Box<ASTNode>>,
+        rhs: Option<Box<ASTNode>>,
+    ) -> Box<ASTNode> {
+        Box::new(ASTNode::new(kind, lhs, rhs))
+    }
+
+    pub fn binary(kind: ASTNodeKind, lhs: Box<ASTNode>, rhs: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::new(kind, Some(lhs), Some(rhs)))
+    }
+
+    pub fn leaf(kind: ASTNodeKind) -> Box<ASTNode> {
+        Box::new(ASTNode::new(kind, None, None))
+    }
+
+    pub fn unary(kind: ASTNodeKind, child: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::new(kind, None, Some(child)))
     }
 }
 
@@ -57,8 +65,8 @@ impl ASTNode {
 // unary      = ("+" | "-")? primary
 // primary    = num | ident | "(" expr ")"
 
-pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<MaybeASTNode> {
-    let mut statements: Vec<MaybeASTNode> = vec![];
+pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>> {
+    let mut statements: Vec<Box<ASTNode>> = vec![];
 
     loop {
         if token.is_none() {
@@ -71,37 +79,37 @@ pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<MaybeASTNode>
     statements
 }
 
-fn stmt(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn stmt(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let node = expr(token, input);
     Token::consume(token, ";");
     node
 }
 
-pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     assign(token, input)
 }
 
-fn assign(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn assign(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = equality(token, input);
 
     if Token::consume(token, "=") {
         let rhs = assign(token, input);
-        node = ASTNode::new_meybe_node(ASTNodeKind::Assign, node, rhs);
+        node = ASTNode::binary(ASTNodeKind::Assign, node, rhs);
     }
 
     node
 }
 
-fn equality(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn equality(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = relational(token, input);
 
     loop {
         if Token::consume(token, "==") {
             let rhs = relational(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Equal, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Equal, node, rhs);
         } else if Token::consume(token, "!=") {
             let rhs = relational(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::NotEqual, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::NotEqual, node, rhs);
         } else {
             break;
         }
@@ -110,22 +118,22 @@ fn equality(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     node
 }
 
-fn relational(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn relational(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = add(token, input);
 
     loop {
         if Token::consume(token, "<") {
             let rhs = add(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Less, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Less, node, rhs);
         } else if Token::consume(token, "<=") {
             let rhs = add(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::LessEqual, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::LessEqual, node, rhs);
         } else if Token::consume(token, ">") {
             let rhs = add(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Greater, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Greater, node, rhs);
         } else if Token::consume(token, ">=") {
             let rhs = add(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::GreaterEqual, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::GreaterEqual, node, rhs);
         } else {
             break;
         }
@@ -134,16 +142,16 @@ fn relational(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
     node
 }
 
-fn add(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn add(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = mul(token, input);
 
     loop {
         if Token::consume(token, "+") {
             let rhs = mul(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Add, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Add, node, rhs);
         } else if Token::consume(token, "-") {
             let rhs = mul(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Sub, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Sub, node, rhs);
         } else {
             break;
         }
@@ -153,16 +161,16 @@ fn add(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
 }
 
 //  mul = unary ("*" unary | "/" unary)*
-fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn mul(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = unary(token, input);
 
     loop {
         if Token::consume(token, "*") {
             let rhs = unary(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Mul, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Mul, node, rhs);
         } else if Token::consume(token, "/") {
             let rhs = unary(token, input);
-            node = ASTNode::new_meybe_node(ASTNodeKind::Div, node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Div, node, rhs);
         } else {
             break;
         }
@@ -172,22 +180,18 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
 }
 
 // unary   = ("+" | "-")? primary
-fn unary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn unary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     if Token::consume(token, "+") {
         return primary(token, input);
     } else if Token::consume(token, "-") {
         let node = primary(token, input);
-        return Some(Box::new(ASTNode::new(
-            ASTNodeKind::Sub,
-            Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
-            node,
-        )));
+        return ASTNode::binary(ASTNodeKind::Sub, ASTNode::leaf(ASTNodeKind::Num(0)), node);
     }
     primary(token, input)
 }
 
 // primary = num | identifier |  "(" expr ")"
-fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
+fn primary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     if Token::consume(token, "(") {
         let node = expr(token, input);
         Token::expect(token, ")", input);
@@ -198,15 +202,11 @@ fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
         match t.kind {
             TokenKind::Number(num) => {
                 *token = t.next;
-                return ASTNode::new_meybe_node(ASTNodeKind::Num(num), None, None);
+                return ASTNode::leaf(ASTNodeKind::Num(num));
             }
             TokenKind::Identifier(var) => {
                 *token = t.next;
-                return ASTNode::new_meybe_node(
-                    ASTNodeKind::LocalVariable(var.get_offset()),
-                    None,
-                    None,
-                );
+                return ASTNode::leaf(ASTNodeKind::LocalVariable(var.get_offset()));
             }
             _ => unreachable!("{:?}", t),
         }
@@ -217,7 +217,7 @@ fn primary(token: &mut Option<Box<Token>>, input: &str) -> MaybeASTNode {
 
 #[cfg(test)]
 mod tests {
-    use super::super::token::TokenKind;
+    use super::super::token::{LocalVariable, TokenKind};
     use super::*;
 
     struct TestTokenStream<'a> {
@@ -260,7 +260,7 @@ mod tests {
         name: &'a str,
         token: Option<Box<Token<'a>>>,
         raw_input: &'a str,
-        expected: MaybeASTNode,
+        expected: Box<ASTNode>,
     }
 
     #[test]
@@ -270,7 +270,7 @@ mod tests {
                 name: "数値が正しくparseされること",
                 token: Some(Box::new(Token::init(TokenKind::Number(1), "1"))),
                 raw_input: "1",
-                expected: Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                expected: Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None)),
             },
             TestCase {
                 name: "1 + 2 * 3 が正しくparseされること",
@@ -282,7 +282,7 @@ mod tests {
                     .add(TokenKind::Number(3), 4, 5)
                     .build(),
                 raw_input: "1 + 2 * 3",
-                expected: Some(Box::new(ASTNode::new(
+                expected: Box::new(ASTNode::new(
                     ASTNodeKind::Add,
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(
@@ -290,7 +290,7 @@ mod tests {
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
                     ))),
-                ))),
+                )),
             },
             TestCase {
                 name: "1*2+(3+4) が正しくparseされること",
@@ -306,7 +306,7 @@ mod tests {
                     .add(TokenKind::Reserved(")"), 8, 9)
                     .build(),
                 raw_input: "1*2+(3+4)",
-                expected: Some(Box::new(ASTNode::new(
+                expected: Box::new(ASTNode::new(
                     ASTNodeKind::Add,
                     Some(Box::new(ASTNode::new(
                         ASTNodeKind::Mul,
@@ -318,7 +318,7 @@ mod tests {
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(4), None, None))),
                     ))),
-                ))),
+                )),
             },
             TestCase {
                 name: "-1 * +2 が正しくparseされること",
@@ -330,7 +330,7 @@ mod tests {
                     .add(TokenKind::Number(2), 4, 5)
                     .build(),
                 raw_input: "-1 * +2",
-                expected: Some(Box::new(ASTNode::new(
+                expected: Box::new(ASTNode::new(
                     ASTNodeKind::Mul,
                     Some(Box::new(ASTNode::new(
                         ASTNodeKind::Sub,
@@ -338,7 +338,7 @@ mod tests {
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     ))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ))),
+                )),
             },
             TestCase {
                 name: "1 <= 2 が正しくparseされること",
@@ -348,11 +348,11 @@ mod tests {
                     .add(TokenKind::Number(2), 3, 4)
                     .build(),
                 raw_input: "1 <= 2",
-                expected: Some(Box::new(ASTNode::new(
+                expected: Box::new(ASTNode::new(
                     ASTNodeKind::LessEqual,
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ))),
+                )),
             },
         ];
 
@@ -373,11 +373,11 @@ mod tests {
                     .add(TokenKind::Number(1), 1, 2)
                     .build(),
                 raw_input: "-1",
-                expected: Some(Box::new(ASTNode::new(
+                expected: Box::new(ASTNode::new(
                     ASTNodeKind::Sub,
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                ))),
+                )),
             },
             TestCase {
                 name: "+1 が正しくparseされること",
@@ -386,7 +386,7 @@ mod tests {
                     .add(TokenKind::Number(1), 1, 2)
                     .build(),
                 raw_input: "+1",
-                expected: Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                expected: Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None)),
             },
         ];
 
@@ -404,7 +404,7 @@ mod tests {
                 name: "数値が正しくparseされること",
                 token: Some(Box::new(Token::init(TokenKind::Number(1), "1"))),
                 raw_input: "1",
-                expected: Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                expected: Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None)),
             },
             TestCase {
                 name: "識別子が正しくparseされること",
@@ -413,11 +413,7 @@ mod tests {
                     "x",
                 ))),
                 raw_input: "x",
-                expected: Some(Box::new(ASTNode::new(
-                    ASTNodeKind::LocalVariable(0),
-                    None,
-                    None,
-                ))),
+                expected: Box::new(ASTNode::new(ASTNodeKind::LocalVariable(0), None, None)),
             },
         ];
 
@@ -438,11 +434,11 @@ mod tests {
                 .add(TokenKind::Number(2), 2, 3)
                 .build(),
             raw_input: "1 * 2",
-            expected: Some(Box::new(ASTNode::new(
+            expected: Box::new(ASTNode::new(
                 ASTNodeKind::Mul,
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-            ))),
+            )),
         }];
 
         for case in test_cases {
@@ -462,11 +458,11 @@ mod tests {
                 .add(TokenKind::Number(2), 2, 3)
                 .build(),
             raw_input: "1 < 2",
-            expected: Some(Box::new(ASTNode::new(
+            expected: Box::new(ASTNode::new(
                 ASTNodeKind::Less,
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-            ))),
+            )),
         }];
 
         for case in test_cases {
@@ -485,11 +481,11 @@ mod tests {
                 .add(TokenKind::Number(2), 3, 4)
                 .build(),
             raw_input: "1 == 2",
-            expected: Some(Box::new(ASTNode::new(
+            expected: Box::new(ASTNode::new(
                 ASTNodeKind::Equal,
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-            ))),
+            )),
         }];
 
         for case in test_cases {
@@ -508,7 +504,7 @@ mod tests {
                 .add(TokenKind::Number(1), 2, 3)
                 .build(),
             raw_input: "x = 1",
-            expected: Some(Box::new(ASTNode::new(
+            expected: Box::new(ASTNode::new(
                 ASTNodeKind::Assign,
                 Some(Box::new(ASTNode::new(
                     ASTNodeKind::LocalVariable(0),
@@ -516,7 +512,7 @@ mod tests {
                     None,
                 ))),
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-            ))),
+            )),
         }];
 
         for case in test_cases {
@@ -536,7 +532,7 @@ mod tests {
                 .add(TokenKind::Reserved(";"), 3, 4)
                 .build(),
             raw_input: "x = 1;",
-            expected: Some(Box::new(ASTNode::new(
+            expected: Box::new(ASTNode::new(
                 ASTNodeKind::Assign,
                 Some(Box::new(ASTNode::new(
                     ASTNodeKind::LocalVariable(0),
@@ -544,7 +540,7 @@ mod tests {
                     None,
                 ))),
                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-            ))),
+            )),
         }];
 
         for case in test_cases {
@@ -559,7 +555,7 @@ mod tests {
             name: &'a str,
             token: Option<Box<Token<'a>>>,
             raw_input: &'a str,
-            expected: Vec<MaybeASTNode>,
+            expected: Vec<Box<ASTNode>>,
         }
 
         let test_cases = vec![ProgramTestCase {
@@ -576,7 +572,7 @@ mod tests {
                 .build(),
             raw_input: "x = 1; y = 2;",
             expected: vec![
-                Some(Box::new(ASTNode::new(
+                Box::new(ASTNode::new(
                     ASTNodeKind::Assign,
                     Some(Box::new(ASTNode::new(
                         ASTNodeKind::LocalVariable(0),
@@ -584,8 +580,8 @@ mod tests {
                         None,
                     ))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                ))),
-                Some(Box::new(ASTNode::new(
+                )),
+                Box::new(ASTNode::new(
                     ASTNodeKind::Assign,
                     Some(Box::new(ASTNode::new(
                         ASTNodeKind::LocalVariable(0),
@@ -593,7 +589,7 @@ mod tests {
                         None,
                     ))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ))),
+                )),
             ],
         }];
 

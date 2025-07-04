@@ -26,7 +26,7 @@ fn main() {
     output.push_str("  sub rsp, 208\n");
 
     for program in programs {
-        gen_asm(program, &mut output);
+        gen_asm(&program, &mut output);
     }
 
     output.push_str("  mov rsp, rbp\n");
