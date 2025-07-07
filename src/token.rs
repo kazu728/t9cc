@@ -86,21 +86,25 @@ impl<'a> Token<'a> {
         false
     }
 
-    /**
-     * 次のトークンが数値の場合、トークンを1つ読み進めてその数値を返す
-     * トークンが数値でない場合はエラーを出力して終了する
-     */
-    pub fn expect_number(token: &mut MaybeToken<'a>, raw_input: &str) -> i32 {
+    fn expect_token<T, F>(
+        token: &mut MaybeToken<'a>,
+        input: &str,
+        check: F,
+        error_msg: &str,
+    ) -> Option<T>
+    where
+        F: FnOnce(&Token<'a>) -> Option<T>,
+    {
         if let Some(tok) = token {
-            if let TokenKind::Number(n) = tok.kind {
+            if let Some(result) = check(tok) {
                 *token = tok.next.take();
-                return n;
+                return Some(result);
             }
-            error_at(&tok.input, raw_input, "数値ではありません");
+            error_at(&tok.input, input, error_msg);
         } else {
-            error_at("", raw_input, "予期しないトークンの終端です");
+            error_at("", input, "予期しないトークンの終端です");
         }
-        unreachable!()
+        None
     }
 
     /**
@@ -108,19 +112,13 @@ impl<'a> Token<'a> {
      * トークンが指定された値であればトークンを消費して次に進む
      * トークンが指定された値でない場合はエラーを出力して終了する
      */
-    // TOOO: expect_number といい感じに共通化したい
     pub fn expect(token: &mut MaybeToken<'a>, c: &str, input: &str) {
-        if let Some(tok) = token {
-            if let TokenKind::Reserved(ch) = tok.kind {
-                if ch == c {
-                    *token = tok.next.take();
-                    return;
-                }
-            }
-            error_at(&tok.input, input, &format!("'{}' ではありません", c));
-        } else {
-            error_at("", input, "予期しないトークンの終端です");
-        }
+        Self::expect_token(
+            token,
+            input,
+            |tok| if tok.is_valid(c) { Some(()) } else { None },
+            &format!("'{}' ではありません", c),
+        );
     }
 }
 
@@ -307,21 +305,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_expect_number() {
-        let mut token = Token::new_maybe_token(TokenKind::Number(1), "1", None);
-
-        let result = Token::expect_number(&mut token, "1");
-        assert_eq!(result, 1);
-        assert_eq!(token, None);
-    }
-
-    #[test]
-    #[should_panic(expected = "数値ではありません")]
-    fn test_expect_number_should_panic() {
-        let mut token = Token::new_maybe_token(TokenKind::Reserved("+"), "+", None);
-        Token::expect_number(&mut token, "+");
-    }
 
     #[test]
     fn test_tokenize() {
