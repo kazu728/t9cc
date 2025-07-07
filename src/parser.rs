@@ -17,6 +17,8 @@ pub enum ASTNodeKind {
 
     LocalVariable(u32), // ローカル変数のベースポインタからのオフセット,
     Assign,
+
+    Return,
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -50,12 +52,12 @@ impl ASTNode {
     }
 
     pub fn unary(kind: ASTNodeKind, child: Box<ASTNode>) -> Box<ASTNode> {
-        Box::new(ASTNode::new(kind, None, Some(child)))
+        Box::new(ASTNode::new(kind, Some(child), None))
     }
 }
 
 // program    = stmt*
-// stmt       = expr ";"
+// stmt       = expr ";" | "return" expr ";"
 // expr       = assign
 // assign     = equality ("=" assign)?
 // equality   = relational ("==" relational | "!=" relational)*
@@ -80,8 +82,14 @@ pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>>
 }
 
 fn stmt(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
+    if Token::consume(token, "return") {
+        let expr_node = expr(token, input);
+        Token::expect(token, ";", input);
+        return ASTNode::unary(ASTNodeKind::Return, expr_node);
+    }
+
     let node = expr(token, input);
-    Token::consume(token, ";");
+    Token::expect(token, ";", input);
     node
 }
 
@@ -523,25 +531,65 @@ mod tests {
     }
     #[test]
     fn test_stmt() {
-        let test_cases = vec![TestCase {
-            name: "x = 1; が正しくparseされること",
-            token: TestTokenStream::new("x=1;")
-                .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
-                .add(TokenKind::Reserved("="), 1, 2)
-                .add(TokenKind::Number(1), 2, 3)
-                .add(TokenKind::Reserved(";"), 3, 4)
-                .build(),
-            raw_input: "x = 1;",
-            expected: Box::new(ASTNode::new(
-                ASTNodeKind::Assign,
-                Some(Box::new(ASTNode::new(
-                    ASTNodeKind::LocalVariable(0),
+        let test_cases = vec![
+            TestCase {
+                name: "x = 1; が正しくparseされること",
+                token: TestTokenStream::new("x=1;")
+                    .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
+                    .add(TokenKind::Reserved("="), 1, 2)
+                    .add(TokenKind::Number(1), 2, 3)
+                    .add(TokenKind::Reserved(";"), 3, 4)
+                    .build(),
+                raw_input: "x = 1;",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Assign,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::LocalVariable(0),
+                        None,
+                        None,
+                    ))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                )),
+            },
+            TestCase {
+                name: "return文が正しくparseされること",
+                token: TestTokenStream::new("return 42;")
+                    .add(TokenKind::Return, 0, 6)
+                    .add(TokenKind::Number(42), 7, 9)
+                    .add(TokenKind::Reserved(";"), 9, 10)
+                    .build(),
+                raw_input: "return 42;",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Return,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
                     None,
+                )),
+            },
+            TestCase {
+                name: "return式が正しくparseされること",
+                token: TestTokenStream::new("return x+1;")
+                    .add(TokenKind::Return, 0, 6)
+                    .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 7, 8)
+                    .add(TokenKind::Reserved("+"), 8, 9)
+                    .add(TokenKind::Number(1), 9, 10)
+                    .add(TokenKind::Reserved(";"), 10, 11)
+                    .build(),
+                raw_input: "return x+1;",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Return,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::Add,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::LocalVariable(0),
+                            None,
+                            None,
+                        ))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    ))),
                     None,
-                ))),
-                Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-            )),
-        }];
+                )),
+            },
+        ];
 
         for case in test_cases {
             let mut token = case.token;

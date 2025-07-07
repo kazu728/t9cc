@@ -6,6 +6,7 @@ pub enum TokenKind<'a> {
     Number(i32),                   // 整数トークン
     Begin, // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
     Identifier(LocalVariable<'a>), // 識別子
+    Return, // return文
 }
 
 type MaybeToken<'a> = Option<Box<Token<'a>>>;
@@ -68,7 +69,7 @@ impl<'a> Token<'a> {
     }
 
     fn is_valid(&self, op: &str) -> bool {
-        self.kind == TokenKind::Reserved(op) && op.len() == self.len && self.input == op
+        self.input == op && op.len() == self.len
     }
 
     /**
@@ -152,7 +153,7 @@ impl<'a> Tokenizer<'a> {
 
             let next_token = match c {
                 '0'..='9' => self.parse_number(i),
-                'a'..='z' | 'A'..='Z' => self.parse_identifier(i),
+                'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(i),
                 '+' | '-' | '*' | '/' | '(' | ')' | ';' => {
                     self.parse_single_char_op(i, &self.input[i..i + 1])
                 }
@@ -168,6 +169,10 @@ impl<'a> Tokenizer<'a> {
         }
 
         *head.next.take().unwrap()
+    }
+
+    fn is_alphanumeric(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_'
     }
 
     fn parse_number(&mut self, i: usize) -> MaybeToken<'a> {
@@ -195,7 +200,7 @@ impl<'a> Tokenizer<'a> {
         self.chars.next();
         let start = i;
         while let Some((_, c)) = self.chars.peek() {
-            if c.is_ascii_alphanumeric() {
+            if Self::is_alphanumeric(*c) {
                 self.chars.next();
             } else {
                 break;
@@ -209,20 +214,25 @@ impl<'a> Tokenizer<'a> {
 
         let name = &self.input[start..end];
 
-        let offset = if let Some(existing_offset) = self.find_variable(name) {
-            existing_offset
-        } else {
-            let new_offset = self.next_offset;
-            self.variable_environment.push((name, new_offset));
-            self.next_offset += 8;
-            new_offset
-        };
+        match name {
+            "return" => Token::new_maybe_token(TokenKind::Return, name, None),
+            _ => {
+                let offset = if let Some(existing_offset) = self.find_variable(name) {
+                    existing_offset
+                } else {
+                    let new_offset = self.next_offset;
+                    self.variable_environment.push((name, new_offset));
+                    self.next_offset += 8;
+                    new_offset
+                };
 
-        Token::new_maybe_token(
-            TokenKind::Identifier(LocalVariable::new(name, offset)),
-            name,
-            None,
-        )
+                Token::new_maybe_token(
+                    TokenKind::Identifier(LocalVariable::new(name, offset)),
+                    name,
+                    None,
+                )
+            }
+        }
     }
 
     fn find_variable(&self, name: &str) -> Option<u32> {
@@ -420,16 +430,40 @@ mod tests {
 
     #[test]
     fn test_parse_identifier() {
-        let mut tokenizer = Tokenizer::new("var1 var2");
-        let result = tokenizer.parse_identifier(0);
+        struct TestCase<'a> {
+            input: &'a str,
+            expected: Option<Box<Token<'a>>>,
+        }
 
-        let expected = Token::new_maybe_token(
-            TokenKind::Identifier(LocalVariable::new("var1", 8)),
-            "var1",
-            None,
-        );
+        let cases: Vec<TestCase> = vec![
+            TestCase {
+                input: "var1 var2",
+                expected: Token::new_maybe_token(
+                    TokenKind::Identifier(LocalVariable::new("var1", 8)),
+                    "var1",
+                    None,
+                ),
+            },
+            TestCase {
+                input: "return",
+                expected: Token::new_maybe_token(TokenKind::Return, "return", None),
+            },
+            TestCase {
+                input: "return_1",
+                expected: Token::new_maybe_token(
+                    TokenKind::Identifier(LocalVariable::new("return_1", 8)),
+                    "return_1",
+                    None,
+                ),
+            },
+        ];
 
-        assert_eq!(result, expected);
+        for case in cases {
+            let mut tokenizer = Tokenizer::new(case.input);
+            let result = tokenizer.parse_identifier(0);
+
+            assert_eq!(result, case.expected);
+        }
     }
 
     #[test]

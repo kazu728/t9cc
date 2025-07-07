@@ -33,6 +33,18 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
             output.push_str("  push rdi\n");
             return output.to_string();
         }
+        ASTNodeKind::Return => {
+            if let Some(expr) = &ast_node.lhs {
+                gen_stack_insruction_asm(expr, output);
+                output.push_str("  pop rax\n");
+                output.push_str("  mov rsp, rbp\n");
+                output.push_str("  pop rbp\n");
+                output.push_str("  ret\n");
+            }
+
+            return output.to_string();
+        }
+
         // TODO: 2項演算子は別の脚に分ける
         _ => {
             if let Some(lhs) = &ast_node.lhs {
@@ -207,7 +219,15 @@ mod tests {
                 expected: "  push 1\n  push 2\n  pop rdi\n  pop rax\n  cmp rax, rdi\n  setne al\n  movzb rax, al\n  push rax\n"
                     .to_string(),
             },
-            
+            TestCase{
+                name: "return文",
+                node: ASTNode::new(
+                    ASTNodeKind::Return,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                    None,
+                ),
+                expected: "  push 42\n  pop rax\n  mov rsp, rbp\n  pop rbp\n  ret\n".to_string(),
+            }
         ];
 
         for case in test_cases {
@@ -219,30 +239,4 @@ mod tests {
             );
         }
     }
-
-//     #[test]
-//     fn test_gen_asm() {
-//         let input = Some(Box::new(ASTNode::new(
-//             ASTNodeKind::Add,
-//             Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-//             Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-//         )));
-
-//         let result = gen_asm(input, &mut String::new());
-
-//         let expected = r#".intel_syntax noprefix
-// .global main
-// main:
-//   push 1
-//   push 2
-//   pop rdi
-//   pop rax
-//   add rax, rdi
-//   push rax
-//   pop rax
-//   ret
-// "#;
-
-//         assert_eq!(result, expected);
-//     } 
 }
