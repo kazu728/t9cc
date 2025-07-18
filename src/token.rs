@@ -7,6 +7,10 @@ pub enum TokenKind<'a> {
     Begin, // 入力の始まりを表すトークン, 入力の終わりはNoneで表すため定義しない
     Identifier(LocalVariable<'a>), // 識別子
     Return, // return文
+    If,    // if文
+    Else,  // else文
+    While, // while文
+    For,   // for文
 }
 
 type MaybeToken<'a> = Option<Box<Token<'a>>>;
@@ -214,6 +218,10 @@ impl<'a> Tokenizer<'a> {
 
         match name {
             "return" => Token::new_maybe_token(TokenKind::Return, name, None),
+            "if" => Token::new_maybe_token(TokenKind::If, name, None),
+            "else" => Token::new_maybe_token(TokenKind::Else, name, None),
+            "while" => Token::new_maybe_token(TokenKind::While, name, None),
+            "for" => Token::new_maybe_token(TokenKind::For, name, None),
             _ => {
                 let offset = if let Some(existing_offset) = self.find_variable(name) {
                     existing_offset
@@ -304,7 +312,6 @@ mod tests {
             assert_eq!(token, next);
         }
     }
-
 
     #[test]
     fn test_tokenize() {
@@ -438,6 +445,18 @@ mod tests {
                     "return_1",
                     None,
                 ),
+            },
+            TestCase {
+                input: "if",
+                expected: Token::new_maybe_token(TokenKind::If, "if", None),
+            },
+            TestCase {
+                input: "while",
+                expected: Token::new_maybe_token(TokenKind::While, "while", None),
+            },
+            TestCase {
+                input: "for",
+                expected: Token::new_maybe_token(TokenKind::For, "for", None),
             },
         ];
 
