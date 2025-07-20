@@ -139,12 +139,6 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
             output.push_str("  push 0\n");
             return output.to_string();
         }
-        ASTNodeKind::IfBody => {
-            panic!("IfBody node should not be evaluated directly");
-        }
-        ASTNodeKind::ForInit | ASTNodeKind::ForUpdate => {
-            panic!("ForInit and ForUpdate nodes should not be evaluated directly");
-        }
         ASTNodeKind::Return => {
             if let Some(expr) = &ast_node.lhs {
                 gen_stack_insruction_asm(expr, output);
@@ -157,8 +151,16 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
             return output.to_string();
         }
 
-        // TODO: 2項演算子は別の脚に分ける
-        _ => {
+        ASTNodeKind::Add
+        | ASTNodeKind::Sub
+        | ASTNodeKind::Mul
+        | ASTNodeKind::Div
+        | ASTNodeKind::Equal
+        | ASTNodeKind::NotEqual
+        | ASTNodeKind::Less
+        | ASTNodeKind::LessEqual
+        | ASTNodeKind::Greater
+        | ASTNodeKind::GreaterEqual => {
             if let Some(lhs) = &ast_node.lhs {
                 gen_stack_insruction_asm(lhs, output);
             }
@@ -207,11 +209,13 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
                     // idvはRDXとRAXを撮って、それを合わせたものを128ビット整数とみなしてそれを引数のレジスタの64ビットの値で割り、商をRAXに、余りをRDXにセットする
                     output.push_str("  idiv rdi\n");
                 }
-                _ => unimplemented!(),
+                _ => unreachable!(),
             }
             output.push_str("  push rax\n");
             return output.to_string();
         }
+
+        _ => unreachable!("Unhandled AST node kind: {:?}", ast_node.kind),
     }
 }
 
@@ -235,6 +239,12 @@ mod tests {
     use super::*;
     use crate::parser::{ASTNode, ASTNodeKind};
 
+    fn reset_label_counter() {
+        unsafe {
+            LABEL_COUNTER = 0;
+        }
+    }
+
     #[test]
     fn test_gen_stack_instruction_asm() {
         struct TestCase {
@@ -247,7 +257,9 @@ mod tests {
             TestCase {
                 name: "数値",
                 node: ASTNode::new(ASTNodeKind::Num(42), None, None),
-                expected: "  push 42\n".to_string(),
+                expected: "  push 42
+"
+                .to_string(),
             },
             TestCase {
                 name: "加算",
@@ -256,8 +268,14 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ),
-                expected: "  push 1\n  push 2\n  pop rdi\n  pop rax\n  add rax, rdi\n  push rax\n"
-                    .to_string(),
+                expected: "  push 1
+  push 2
+  pop rdi
+  pop rax
+  add rax, rdi
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "減算",
@@ -266,8 +284,14 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(5), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
                 ),
-                expected: "  push 5\n  push 3\n  pop rdi\n  pop rax\n  sub rax, rdi\n  push rax\n"
-                    .to_string(),
+                expected: "  push 5
+  push 3
+  pop rdi
+  pop rax
+  sub rax, rdi
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "乗算",
@@ -276,8 +300,14 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(4), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(6), None, None))),
                 ),
-                expected: "  push 4\n  push 6\n  pop rdi\n  pop rax\n  imul rax, rdi\n  push rax\n"
-                    .to_string(),
+                expected: "  push 4
+  push 6
+  pop rdi
+  pop rax
+  imul rax, rdi
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "除算",
@@ -286,9 +316,15 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(8), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ),
-                expected:
-                    "  push 8\n  push 2\n  pop rdi\n  pop rax\n  cqo\n  idiv rdi\n  push rax\n"
-                        .to_string(),
+                expected: "  push 8
+  push 2
+  pop rdi
+  pop rax
+  cqo
+  idiv rdi
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "複合式 (1+2)*(3-1)",
@@ -305,11 +341,24 @@ mod tests {
                         Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     ))),
                 ),
-                expected: String::from(
-                    "  push 1\n  push 2\n  pop rdi\n  pop rax\n  add rax, rdi\n  push rax\n",
-                )
-                    + "  push 3\n  push 1\n  pop rdi\n  pop rax\n  sub rax, rdi\n  push rax\n"
-                    + "  pop rdi\n  pop rax\n  imul rax, rdi\n  push rax\n",
+                expected: "  push 1
+  push 2
+  pop rdi
+  pop rax
+  add rax, rdi
+  push rax
+  push 3
+  push 1
+  pop rdi
+  pop rax
+  sub rax, rdi
+  push rax
+  pop rdi
+  pop rax
+  imul rax, rdi
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "等価演算子",
@@ -318,8 +367,16 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ),
-                expected: "  push 1\n  push 2\n  pop rdi\n  pop rax\n  cmp rax, rdi\n  sete al\n  movzb rax, al\n  push rax\n"
-                    .to_string(),
+                expected: "  push 1
+  push 2
+  pop rdi
+  pop rax
+  cmp rax, rdi
+  sete al
+  movzb rax, al
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "不等価演算子",
@@ -328,36 +385,65 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ),
-                expected: "  push 1\n  push 2\n  pop rdi\n  pop rax\n  cmp rax, rdi\n  setne al\n  movzb rax, al\n  push rax\n"
-                    .to_string(),
+                expected: "  push 1
+  push 2
+  pop rdi
+  pop rax
+  cmp rax, rdi
+  setne al
+  movzb rax, al
+  push rax
+"
+                .to_string(),
             },
-            TestCase{
+            TestCase {
                 name: "return文",
                 node: ASTNode::new(
                     ASTNodeKind::Return,
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
                     None,
                 ),
-                expected: "  push 42\n  pop rax\n  mov rsp, rbp\n  pop rbp\n  ret\n".to_string(),
+                expected: "  push 42
+  pop rax
+  mov rsp, rbp
+  pop rbp
+  ret
+"
+                .to_string(),
             },
             TestCase {
                 name: "ローカル変数",
-                node: ASTNode::new(
-                    ASTNodeKind::LocalVariable(8),
-                    None,
-                    None,
-                ),
-                expected: "  mov rax, rbp\n  sub rax, 8\n  push rax\n  pop rax\n  mov rax, [rax]\n  push rax\n".to_string(),
+                node: ASTNode::new(ASTNodeKind::LocalVariable(8), None, None),
+                expected: "  mov rax, rbp
+  sub rax, 8
+  push rax
+  pop rax
+  mov rax, [rax]
+  push rax
+"
+                .to_string(),
             },
             TestCase {
                 name: "ローカル変数の代入",
                 node: ASTNode::new(
                     ASTNodeKind::Assign,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::LocalVariable(8), None, None))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::LocalVariable(8),
+                        None,
+                        None,
+                    ))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
                 ),
-                expected: "  mov rax, rbp\n  sub rax, 8\n  push rax\n  push 42\n  pop rdi\n  pop rax\n  mov [rax], rdi\n  push rdi\n"
-                    .to_string(),
+                expected: "  mov rax, rbp
+  sub rax, 8
+  push rax
+  push 42
+  pop rdi
+  pop rax
+  mov [rax], rdi
+  push rdi
+"
+                .to_string(),
             },
             TestCase {
                 name: "while文",
@@ -366,12 +452,205 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 ),
-                expected: ".Lbegin0:\n  push 1\n  pop rax\n  cmp rax, 0\n  je .Lend0\n  push 2\n  pop rax\n  jmp .Lbegin0\n.Lend0:\n  push 0\n"
-                    .to_string(),
+                expected: ".Lbegin0:
+  push 1
+  pop rax
+  cmp rax, 0
+  je .Lend0
+  push 2
+  pop rax
+  jmp .Lbegin0
+.Lend0:
+  push 0
+"
+                .to_string(),
+            },
+            TestCase {
+                name: "if文（else節なし）",
+                node: ASTNode::new(
+                    ASTNodeKind::If,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::IfBody,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                        None,
+                    ))),
+                ),
+                expected: "  push 1
+  pop rax
+  cmp rax, 0
+  je .Lelse0
+  push 42
+  pop rax
+  jmp .Lend0
+.Lelse0:
+.Lend0:
+  push 0
+"
+                .to_string(),
+            },
+            TestCase {
+                name: "if文(else節あり)",
+                node: ASTNode::new(
+                    ASTNodeKind::If,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::IfBody,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(24), None, None))),
+                    ))),
+                ),
+                expected: "  push 0
+  pop rax
+  cmp rax, 0
+  je .Lelse0
+  push 42
+  pop rax
+  jmp .Lend0
+.Lelse0:
+  push 24
+  pop rax
+.Lend0:
+  push 0
+"
+                .to_string(),
+            },
+            TestCase {
+                name: "for文(定数による無限ループ)",
+                node: ASTNode::new(
+                    ASTNodeKind::For,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::ForInit,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    ))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::ForUpdate,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                    ))),
+                ),
+                expected: "  push 0
+  pop rax
+.Lbegin0:
+  push 1
+  pop rax
+  cmp rax, 0
+  je .Lend0
+  push 42
+  pop rax
+  push 2
+  pop rax
+  jmp .Lbegin0
+.Lend0:
+  push 0
+"
+                .to_string(),
+            },
+            TestCase {
+                name: "for文(変数の更新)for (i = 0; i < 3; i = i + 1) { 42; }",
+                node: ASTNode::new(
+                    ASTNodeKind::For,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::ForInit,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::Assign,
+                            Some(Box::new(ASTNode::new(
+                                ASTNodeKind::LocalVariable(8),
+                                None,
+                                None,
+                            ))),
+                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
+                        ))),
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::Less,
+                            Some(Box::new(ASTNode::new(
+                                ASTNodeKind::LocalVariable(8),
+                                None,
+                                None,
+                            ))),
+                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
+                        ))),
+                    ))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::ForUpdate,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::Assign,
+                            Some(Box::new(ASTNode::new(
+                                ASTNodeKind::LocalVariable(8),
+                                None,
+                                None,
+                            ))),
+                            Some(Box::new(ASTNode::new(
+                                ASTNodeKind::Add,
+                                Some(Box::new(ASTNode::new(
+                                    ASTNodeKind::LocalVariable(8),
+                                    None,
+                                    None,
+                                ))),
+                                Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                            ))),
+                        ))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                    ))),
+                ),
+                expected: "  mov rax, rbp
+  sub rax, 8
+  push rax
+  push 0
+  pop rdi
+  pop rax
+  mov [rax], rdi
+  push rdi
+  pop rax
+.Lbegin0:
+  mov rax, rbp
+  sub rax, 8
+  push rax
+  pop rax
+  mov rax, [rax]
+  push rax
+  push 3
+  pop rdi
+  pop rax
+  cmp rax, rdi
+  setl al
+  movzb rax, al
+  push rax
+  pop rax
+  cmp rax, 0
+  je .Lend0
+  push 42
+  pop rax
+  mov rax, rbp
+  sub rax, 8
+  push rax
+  mov rax, rbp
+  sub rax, 8
+  push rax
+  pop rax
+  mov rax, [rax]
+  push rax
+  push 1
+  pop rdi
+  pop rax
+  add rax, rdi
+  push rax
+  pop rdi
+  pop rax
+  mov [rax], rdi
+  push rdi
+  pop rax
+  jmp .Lbegin0
+.Lend0:
+  push 0
+"
+                .to_string(),
             },
         ];
 
         for case in test_cases {
+            reset_label_counter();
             let result = gen_stack_insruction_asm(&case.node, &mut String::new());
             assert_eq!(
                 result, case.expected,

@@ -95,12 +95,12 @@ pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>>
 }
 
 fn stmt(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
-    if Token::consume(token, "if") {
-        Token::expect(token, "(", input);
+    if Token::consume(token, TokenKind::If) {
+        Token::expect(token, TokenKind::LParen, input);
         let cond_node = expr(token, input);
-        Token::expect(token, ")", input);
+        Token::expect(token, TokenKind::RParen, input);
         let then_node = stmt(token, input);
-        let else_node = if Token::consume(token, "else") {
+        let else_node = if Token::consume(token, TokenKind::Else) {
             Some(stmt(token, input))
         } else {
             None
@@ -110,36 +110,36 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
         return ASTNode::new_boxed(ASTNodeKind::If, Some(cond_node), Some(if_body));
     }
 
-    if Token::consume(token, "while") {
-        Token::expect(token, "(", input);
+    if Token::consume(token, TokenKind::While) {
+        Token::expect(token, TokenKind::LParen, input);
         let cond_node = expr(token, input);
-        Token::expect(token, ")", input);
+        Token::expect(token, TokenKind::RParen, input);
         let body_node = stmt(token, input);
         return ASTNode::new_boxed(ASTNodeKind::While, Some(cond_node), Some(body_node));
     }
 
-    if Token::consume(token, "for") {
-        Token::expect(token, "(", input);
+    if Token::consume(token, TokenKind::For) {
+        Token::expect(token, TokenKind::LParen, input);
 
-        let init_node = if !Token::consume(token, ";") {
+        let init_node = if !Token::consume(token, TokenKind::Semicolon) {
             let init = expr(token, input);
-            Token::expect(token, ";", input);
+            Token::expect(token, TokenKind::Semicolon, input);
             Some(init)
         } else {
             None
         };
 
-        let cond_node = if !Token::consume(token, ";") {
+        let cond_node = if !Token::consume(token, TokenKind::Semicolon) {
             let cond = expr(token, input);
-            Token::expect(token, ";", input);
+            Token::expect(token, TokenKind::Semicolon, input);
             Some(cond)
         } else {
             None
         };
 
-        let update_node = if !Token::consume(token, ")") {
+        let update_node = if !Token::consume(token, TokenKind::RParen) {
             let update = expr(token, input);
-            Token::expect(token, ")", input);
+            Token::expect(token, TokenKind::RParen, input);
             Some(update)
         } else {
             None
@@ -160,14 +160,14 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
         );
     }
 
-    if Token::consume(token, "return") {
+    if Token::consume(token, TokenKind::Return) {
         let expr_node = expr(token, input);
-        Token::expect(token, ";", input);
+        Token::expect(token, TokenKind::Semicolon, input);
         return ASTNode::unary(ASTNodeKind::Return, expr_node);
     }
 
     let node = expr(token, input);
-    Token::expect(token, ";", input);
+    Token::expect(token, TokenKind::Semicolon, input);
     node
 }
 
@@ -178,7 +178,7 @@ pub fn expr(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
 fn assign(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = equality(token, input);
 
-    if Token::consume(token, "=") {
+    if Token::consume(token, TokenKind::Assign) {
         let rhs = assign(token, input);
         node = ASTNode::binary(ASTNodeKind::Assign, node, rhs);
     }
@@ -190,10 +190,10 @@ fn equality(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = relational(token, input);
 
     loop {
-        if Token::consume(token, "==") {
+        if Token::consume(token, TokenKind::Equal) {
             let rhs = relational(token, input);
             node = ASTNode::binary(ASTNodeKind::Equal, node, rhs);
-        } else if Token::consume(token, "!=") {
+        } else if Token::consume(token, TokenKind::NotEqual) {
             let rhs = relational(token, input);
             node = ASTNode::binary(ASTNodeKind::NotEqual, node, rhs);
         } else {
@@ -208,16 +208,16 @@ fn relational(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = add(token, input);
 
     loop {
-        if Token::consume(token, "<") {
+        if Token::consume(token, TokenKind::Less) {
             let rhs = add(token, input);
             node = ASTNode::binary(ASTNodeKind::Less, node, rhs);
-        } else if Token::consume(token, "<=") {
+        } else if Token::consume(token, TokenKind::LessEqual) {
             let rhs = add(token, input);
             node = ASTNode::binary(ASTNodeKind::LessEqual, node, rhs);
-        } else if Token::consume(token, ">") {
+        } else if Token::consume(token, TokenKind::Greater) {
             let rhs = add(token, input);
             node = ASTNode::binary(ASTNodeKind::Greater, node, rhs);
-        } else if Token::consume(token, ">=") {
+        } else if Token::consume(token, TokenKind::GreaterEqual) {
             let rhs = add(token, input);
             node = ASTNode::binary(ASTNodeKind::GreaterEqual, node, rhs);
         } else {
@@ -232,10 +232,10 @@ fn add(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = mul(token, input);
 
     loop {
-        if Token::consume(token, "+") {
+        if Token::consume(token, TokenKind::Plus) {
             let rhs = mul(token, input);
             node = ASTNode::binary(ASTNodeKind::Add, node, rhs);
-        } else if Token::consume(token, "-") {
+        } else if Token::consume(token, TokenKind::Minus) {
             let rhs = mul(token, input);
             node = ASTNode::binary(ASTNodeKind::Sub, node, rhs);
         } else {
@@ -251,10 +251,10 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     let mut node = unary(token, input);
 
     loop {
-        if Token::consume(token, "*") {
+        if Token::consume(token, TokenKind::Star) {
             let rhs = unary(token, input);
             node = ASTNode::binary(ASTNodeKind::Mul, node, rhs);
-        } else if Token::consume(token, "/") {
+        } else if Token::consume(token, TokenKind::Slash) {
             let rhs = unary(token, input);
             node = ASTNode::binary(ASTNodeKind::Div, node, rhs);
         } else {
@@ -267,9 +267,9 @@ fn mul(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
 
 // unary   = ("+" | "-")? primary
 fn unary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
-    if Token::consume(token, "+") {
+    if Token::consume(token, TokenKind::Plus) {
         return primary(token, input);
-    } else if Token::consume(token, "-") {
+    } else if Token::consume(token, TokenKind::Minus) {
         let node = primary(token, input);
         return ASTNode::binary(ASTNodeKind::Sub, ASTNode::leaf(ASTNodeKind::Num(0)), node);
     }
@@ -278,9 +278,9 @@ fn unary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
 
 // primary = num | identifier |  "(" expr ")"
 fn primary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
-    if Token::consume(token, "(") {
+    if Token::consume(token, TokenKind::LParen) {
         let node = expr(token, input);
-        Token::expect(token, ")", input);
+        Token::expect(token, TokenKind::RParen, input);
         return node;
     }
 
@@ -362,9 +362,9 @@ mod tests {
                 name: "1 + 2 * 3 が正しくparseされること",
                 token: TestTokenStream::new("1+2*3")
                     .add(TokenKind::Number(1), 0, 1)
-                    .add(TokenKind::Reserved("+"), 1, 2)
+                    .add(TokenKind::Plus, 1, 2)
                     .add(TokenKind::Number(2), 2, 3)
-                    .add(TokenKind::Reserved("*"), 3, 4)
+                    .add(TokenKind::Star, 3, 4)
                     .add(TokenKind::Number(3), 4, 5)
                     .build(),
                 raw_input: "1 + 2 * 3",
@@ -382,14 +382,14 @@ mod tests {
                 name: "1*2+(3+4) が正しくparseされること",
                 token: TestTokenStream::new("1*2+(3+4)")
                     .add(TokenKind::Number(1), 0, 1)
-                    .add(TokenKind::Reserved("*"), 1, 2)
+                    .add(TokenKind::Star, 1, 2)
                     .add(TokenKind::Number(2), 2, 3)
-                    .add(TokenKind::Reserved("+"), 3, 4)
-                    .add(TokenKind::Reserved("("), 4, 5)
+                    .add(TokenKind::Plus, 3, 4)
+                    .add(TokenKind::LParen, 4, 5)
                     .add(TokenKind::Number(3), 5, 6)
-                    .add(TokenKind::Reserved("+"), 6, 7)
+                    .add(TokenKind::Plus, 6, 7)
                     .add(TokenKind::Number(4), 7, 8)
-                    .add(TokenKind::Reserved(")"), 8, 9)
+                    .add(TokenKind::RParen, 8, 9)
                     .build(),
                 raw_input: "1*2+(3+4)",
                 expected: Box::new(ASTNode::new(
@@ -409,10 +409,10 @@ mod tests {
             TestCase {
                 name: "-1 * +2 が正しくparseされること",
                 token: TestTokenStream::new("-1*+2")
-                    .add(TokenKind::Reserved("-"), 0, 1)
+                    .add(TokenKind::Minus, 0, 1)
                     .add(TokenKind::Number(1), 1, 2)
-                    .add(TokenKind::Reserved("*"), 2, 3)
-                    .add(TokenKind::Reserved("+"), 3, 4)
+                    .add(TokenKind::Star, 2, 3)
+                    .add(TokenKind::Plus, 3, 4)
                     .add(TokenKind::Number(2), 4, 5)
                     .build(),
                 raw_input: "-1 * +2",
@@ -430,7 +430,7 @@ mod tests {
                 name: "1 <= 2 が正しくparseされること",
                 token: TestTokenStream::new("1<=2")
                     .add(TokenKind::Number(1), 0, 1)
-                    .add(TokenKind::Reserved("<="), 1, 3)
+                    .add(TokenKind::LessEqual, 1, 3)
                     .add(TokenKind::Number(2), 3, 4)
                     .build(),
                 raw_input: "1 <= 2",
@@ -455,7 +455,7 @@ mod tests {
             TestCase {
                 name: "-1 が正しくparseされること",
                 token: TestTokenStream::new("-1")
-                    .add(TokenKind::Reserved("-"), 0, 1)
+                    .add(TokenKind::Minus, 0, 1)
                     .add(TokenKind::Number(1), 1, 2)
                     .build(),
                 raw_input: "-1",
@@ -468,7 +468,7 @@ mod tests {
             TestCase {
                 name: "+1 が正しくparseされること",
                 token: TestTokenStream::new("+1")
-                    .add(TokenKind::Reserved("+"), 0, 1)
+                    .add(TokenKind::Plus, 0, 1)
                     .add(TokenKind::Number(1), 1, 2)
                     .build(),
                 raw_input: "+1",
@@ -516,7 +516,7 @@ mod tests {
             name: "1 * 2 が正しくparseされること",
             token: TestTokenStream::new("1*2")
                 .add(TokenKind::Number(1), 0, 1)
-                .add(TokenKind::Reserved("*"), 1, 2)
+                .add(TokenKind::Star, 1, 2)
                 .add(TokenKind::Number(2), 2, 3)
                 .build(),
             raw_input: "1 * 2",
@@ -540,7 +540,7 @@ mod tests {
             name: "1 < 2 が正しくparseされること",
             token: TestTokenStream::new("1<2")
                 .add(TokenKind::Number(1), 0, 1)
-                .add(TokenKind::Reserved("<"), 1, 2)
+                .add(TokenKind::Less, 1, 2)
                 .add(TokenKind::Number(2), 2, 3)
                 .build(),
             raw_input: "1 < 2",
@@ -563,7 +563,7 @@ mod tests {
             name: "1 == 2 が正しくparseされること",
             token: TestTokenStream::new("1==2")
                 .add(TokenKind::Number(1), 0, 1)
-                .add(TokenKind::Reserved("=="), 1, 3)
+                .add(TokenKind::Equal, 1, 3)
                 .add(TokenKind::Number(2), 3, 4)
                 .build(),
             raw_input: "1 == 2",
@@ -586,7 +586,7 @@ mod tests {
             name: "x = 1 が正しくparseされること",
             token: TestTokenStream::new("x=1")
                 .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
-                .add(TokenKind::Reserved("="), 1, 2)
+                .add(TokenKind::Assign, 1, 2)
                 .add(TokenKind::Number(1), 2, 3)
                 .build(),
             raw_input: "x = 1",
@@ -614,9 +614,9 @@ mod tests {
                 name: "x = 1; が正しくparseされること",
                 token: TestTokenStream::new("x=1;")
                     .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
-                    .add(TokenKind::Reserved("="), 1, 2)
+                    .add(TokenKind::Assign, 1, 2)
                     .add(TokenKind::Number(1), 2, 3)
-                    .add(TokenKind::Reserved(";"), 3, 4)
+                    .add(TokenKind::Semicolon, 3, 4)
                     .build(),
                 raw_input: "x = 1;",
                 expected: Box::new(ASTNode::new(
@@ -634,7 +634,7 @@ mod tests {
                 token: TestTokenStream::new("return 42;")
                     .add(TokenKind::Return, 0, 6)
                     .add(TokenKind::Number(42), 7, 9)
-                    .add(TokenKind::Reserved(";"), 9, 10)
+                    .add(TokenKind::Semicolon, 9, 10)
                     .build(),
                 raw_input: "return 42;",
                 expected: Box::new(ASTNode::new(
@@ -648,9 +648,9 @@ mod tests {
                 token: TestTokenStream::new("return x+1;")
                     .add(TokenKind::Return, 0, 6)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 7, 8)
-                    .add(TokenKind::Reserved("+"), 8, 9)
+                    .add(TokenKind::Plus, 8, 9)
                     .add(TokenKind::Number(1), 9, 10)
-                    .add(TokenKind::Reserved(";"), 10, 11)
+                    .add(TokenKind::Semicolon, 10, 11)
                     .build(),
                 raw_input: "return x+1;",
                 expected: Box::new(ASTNode::new(
@@ -671,17 +671,17 @@ mod tests {
                 name: "while文が正しくparseされること",
                 token: TestTokenStream::new("while(x<10)x=x+1;")
                     .add(TokenKind::While, 0, 5)
-                    .add(TokenKind::Reserved("("), 5, 6)
+                    .add(TokenKind::LParen, 5, 6)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 6, 7)
-                    .add(TokenKind::Reserved("<"), 7, 8)
+                    .add(TokenKind::Less, 7, 8)
                     .add(TokenKind::Number(10), 8, 10)
-                    .add(TokenKind::Reserved(")"), 10, 11)
+                    .add(TokenKind::RParen, 10, 11)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 11, 12)
-                    .add(TokenKind::Reserved("="), 12, 13)
+                    .add(TokenKind::Assign, 12, 13)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 13, 14)
-                    .add(TokenKind::Reserved("+"), 14, 15)
+                    .add(TokenKind::Plus, 14, 15)
                     .add(TokenKind::Number(1), 15, 16)
-                    .add(TokenKind::Reserved(";"), 16, 17)
+                    .add(TokenKind::Semicolon, 16, 17)
                     .build(),
                 raw_input: "while(x<10)x=x+1;",
                 expected: Box::new(ASTNode::new(
@@ -718,20 +718,20 @@ mod tests {
                 name: "if-else文が正しくparseされること",
                 token: TestTokenStream::new("if(x>0)y=1;else y=2;")
                     .add(TokenKind::If, 0, 2)
-                    .add(TokenKind::Reserved("("), 2, 3)
+                    .add(TokenKind::LParen, 2, 3)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 3, 4)
-                    .add(TokenKind::Reserved(">"), 4, 5)
+                    .add(TokenKind::Greater, 4, 5)
                     .add(TokenKind::Number(0), 5, 6)
-                    .add(TokenKind::Reserved(")"), 6, 7)
+                    .add(TokenKind::RParen, 6, 7)
                     .add(TokenKind::Identifier(LocalVariable::new("y", 8)), 7, 8)
-                    .add(TokenKind::Reserved("="), 8, 9)
+                    .add(TokenKind::Assign, 8, 9)
                     .add(TokenKind::Number(1), 9, 10)
-                    .add(TokenKind::Reserved(";"), 10, 11)
+                    .add(TokenKind::Semicolon, 10, 11)
                     .add(TokenKind::Else, 11, 15)
                     .add(TokenKind::Identifier(LocalVariable::new("y", 8)), 16, 17)
-                    .add(TokenKind::Reserved("="), 17, 18)
+                    .add(TokenKind::Assign, 17, 18)
                     .add(TokenKind::Number(2), 18, 19)
-                    .add(TokenKind::Reserved(";"), 19, 20)
+                    .add(TokenKind::Semicolon, 19, 20)
                     .build(),
                 raw_input: "if(x>0)y=1;else y=2;",
                 expected: Box::new(ASTNode::new(
@@ -772,27 +772,27 @@ mod tests {
                 name: "for文が正しくparseされること",
                 token: TestTokenStream::new("for(i=0;i<10;i=i+1)x=x+1;")
                     .add(TokenKind::For, 0, 3)
-                    .add(TokenKind::Reserved("("), 3, 4)
+                    .add(TokenKind::LParen, 3, 4)
                     .add(TokenKind::Identifier(LocalVariable::new("i", 0)), 4, 5)
-                    .add(TokenKind::Reserved("="), 5, 6)
+                    .add(TokenKind::Assign, 5, 6)
                     .add(TokenKind::Number(0), 6, 7)
-                    .add(TokenKind::Reserved(";"), 7, 8)
+                    .add(TokenKind::Semicolon, 7, 8)
                     .add(TokenKind::Identifier(LocalVariable::new("i", 0)), 8, 9)
-                    .add(TokenKind::Reserved("<"), 9, 10)
+                    .add(TokenKind::Less, 9, 10)
                     .add(TokenKind::Number(10), 10, 12)
-                    .add(TokenKind::Reserved(";"), 12, 13)
+                    .add(TokenKind::Semicolon, 12, 13)
                     .add(TokenKind::Identifier(LocalVariable::new("i", 0)), 13, 14)
-                    .add(TokenKind::Reserved("="), 14, 15)
+                    .add(TokenKind::Assign, 14, 15)
                     .add(TokenKind::Identifier(LocalVariable::new("i", 0)), 15, 16)
-                    .add(TokenKind::Reserved("+"), 16, 17)
+                    .add(TokenKind::Plus, 16, 17)
                     .add(TokenKind::Number(1), 17, 18)
-                    .add(TokenKind::Reserved(")"), 18, 19)
+                    .add(TokenKind::RParen, 18, 19)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 8)), 19, 20)
-                    .add(TokenKind::Reserved("="), 20, 21)
+                    .add(TokenKind::Assign, 20, 21)
                     .add(TokenKind::Identifier(LocalVariable::new("x", 8)), 21, 22)
-                    .add(TokenKind::Reserved("+"), 22, 23)
+                    .add(TokenKind::Plus, 22, 23)
                     .add(TokenKind::Number(1), 23, 24)
-                    .add(TokenKind::Reserved(";"), 24, 25)
+                    .add(TokenKind::Semicolon, 24, 25)
                     .build(),
                 raw_input: "for(i=0;i<10;i=i+1)x=x+1;",
                 expected: Box::new(ASTNode::new(
@@ -878,13 +878,13 @@ mod tests {
             name: "x = 1; y = 2; が正しくparseされること",
             token: TestTokenStream::new("x=1;y=2;")
                 .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 0, 1)
-                .add(TokenKind::Reserved("="), 1, 2)
+                .add(TokenKind::Assign, 1, 2)
                 .add(TokenKind::Number(1), 2, 3)
-                .add(TokenKind::Reserved(";"), 3, 4)
+                .add(TokenKind::Semicolon, 3, 4)
                 .add(TokenKind::Identifier(LocalVariable::new("y", 0)), 4, 5)
-                .add(TokenKind::Reserved("="), 5, 6)
+                .add(TokenKind::Assign, 5, 6)
                 .add(TokenKind::Number(2), 6, 7)
-                .add(TokenKind::Reserved(";"), 7, 8)
+                .add(TokenKind::Semicolon, 7, 8)
                 .build(),
             raw_input: "x = 1; y = 2;",
             expected: vec![
