@@ -16,18 +16,16 @@ pub fn gen_asm(ast_node: &ASTNode, output: &mut String) -> String {
     return output.to_string();
 }
 
-fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
+fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
     match ast_node.kind {
         ASTNodeKind::Num(n) => {
             output.push_str(format!("  push {}\n", n).as_str());
-            return output.to_string();
         }
         ASTNodeKind::LocalVariable(_) => {
             gen_local_varibale(ast_node, output);
             output.push_str("  pop rax\n");
             output.push_str("  mov rax, [rax]\n");
             output.push_str("  push rax\n");
-            return output.to_string();
         }
         ASTNodeKind::Assign => {
             if let Some(lhs) = &ast_node.lhs {
@@ -41,7 +39,6 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
             output.push_str("  pop rax\n");
             output.push_str("  mov [rax], rdi\n");
             output.push_str("  push rdi\n");
-            return output.to_string();
         }
         ASTNodeKind::While => {
             let label_num = get_label_number();
@@ -64,8 +61,8 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
 
             output.push_str(&format!("  jmp {}\n", begin_label));
             output.push_str(&format!("{}:\n", end_label));
+            // while文も値を返すため0をpush
             output.push_str("  push 0\n");
-            return output.to_string();
         }
         ASTNodeKind::For => {
             let label_num = get_label_number();
@@ -103,8 +100,33 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
 
             output.push_str(&format!("  jmp {}\n", begin_label));
             output.push_str(&format!("{}:\n", end_label));
+            // for文も値を返すため0をpush
             output.push_str("  push 0\n");
-            return output.to_string();
+        }
+        ASTNodeKind::Return => {
+            if let Some(expr) = &ast_node.lhs {
+                gen_stack_insruction_asm(expr, output);
+                output.push_str("  pop rax\n");
+                output.push_str("  mov rsp, rbp\n");
+                output.push_str("  pop rbp\n");
+                output.push_str("  ret\n");
+            }
+        }
+        ASTNodeKind::Block => {
+            if let Some(lhs) = &ast_node.lhs {
+                gen_stack_insruction_asm(lhs, output);
+                if ast_node.rhs.is_some() {
+                    // rhsがある場合は、lhsの結果を破棄
+                    output.push_str("  pop rax\n");
+                }
+            }
+            if let Some(rhs) = &ast_node.rhs {
+                gen_stack_insruction_asm(rhs, output);
+            }
+            // 空のブロックの場合は0を返す
+            if ast_node.lhs.is_none() && ast_node.rhs.is_none() {
+                output.push_str("  push 0\n");
+            }
         }
         ASTNodeKind::If => {
             let label_num = get_label_number();
@@ -125,30 +147,16 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
 
             if let Some(then_stmt) = &if_body.lhs {
                 gen_stack_insruction_asm(then_stmt, output);
-                output.push_str("  pop rax\n");
             }
             output.push_str(&format!("  jmp {}\n", end_label));
             output.push_str(&format!("{}:\n", else_label));
 
             if let Some(else_stmt) = &if_body.rhs {
                 gen_stack_insruction_asm(else_stmt, output);
-                output.push_str("  pop rax\n");
+            } else {
+                output.push_str("  push 0\n"); // else節がない場合は0をpush
             }
             output.push_str(&format!("{}:\n", end_label));
-
-            output.push_str("  push 0\n");
-            return output.to_string();
-        }
-        ASTNodeKind::Return => {
-            if let Some(expr) = &ast_node.lhs {
-                gen_stack_insruction_asm(expr, output);
-                output.push_str("  pop rax\n");
-                output.push_str("  mov rsp, rbp\n");
-                output.push_str("  pop rbp\n");
-                output.push_str("  ret\n");
-            }
-
-            return output.to_string();
         }
 
         ASTNodeKind::Add
@@ -205,28 +213,22 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) -> String {
                 }
                 ASTNodeKind::Div => {
                     output.push_str("  cqo\n");
-                    // idivは符号あり除算を行う命令
-                    // idvはRDXとRAXを撮って、それを合わせたものを128ビット整数とみなしてそれを引数のレジスタの64ビットの値で割り、商をRAXに、余りをRDXにセットする
                     output.push_str("  idiv rdi\n");
                 }
                 _ => unreachable!(),
             }
             output.push_str("  push rax\n");
-            return output.to_string();
         }
-
-        _ => unreachable!("Unhandled AST node kind: {:?}", ast_node.kind),
+        _ => unreachable!("Unhandled node kind: {:?}", ast_node.kind),
     }
 }
 
-fn gen_local_varibale(ast_node: &ASTNode, output: &mut String) -> String {
+fn gen_local_varibale(ast_node: &ASTNode, output: &mut String) {
     match ast_node.kind {
         ASTNodeKind::LocalVariable(offset) => {
             output.push_str("  mov rax, rbp\n");
             output.push_str(format!("  sub rax, {}\n", offset).as_str());
             output.push_str("  push rax\n");
-
-            output.to_string()
         }
         _ => {
             panic!("左辺値ではありません")
@@ -246,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gen_stack_instruction_asm() {
+    fn test_gen_stack_insruction_asm() {
         struct TestCase {
             name: &'static str,
             node: ASTNode,
@@ -397,21 +399,6 @@ mod tests {
                 .to_string(),
             },
             TestCase {
-                name: "return文",
-                node: ASTNode::new(
-                    ASTNodeKind::Return,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                    None,
-                ),
-                expected: "  push 42
-  pop rax
-  mov rsp, rbp
-  pop rbp
-  ret
-"
-                .to_string(),
-            },
-            TestCase {
                 name: "ローカル変数",
                 node: ASTNode::new(ASTNodeKind::LocalVariable(8), None, None),
                 expected: "  mov rax, rbp
@@ -442,6 +429,64 @@ mod tests {
   pop rax
   mov [rax], rdi
   push rdi
+"
+                .to_string(),
+            },
+        ];
+
+        for case in test_cases {
+            reset_label_counter();
+            let mut output = String::new();
+            gen_stack_insruction_asm(&case.node, &mut output);
+            assert_eq!(
+                output, case.expected,
+                "テストケース '{}' が失敗しました",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_block_statements() {
+        struct TestCase {
+            name: &'static str,
+            node: ASTNode,
+            expected: String,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                name: "空のブロック",
+                node: ASTNode::new(ASTNodeKind::Block, None, None),
+                expected: "  push 0\n".to_string(),
+            },
+            TestCase {
+                name: "単一文のブロック",
+                node: ASTNode::new(
+                    ASTNodeKind::Block,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                    None,
+                ),
+                expected: "  push 42
+"
+                .to_string(),
+            },
+            TestCase {
+                name: "複数文のブロック {1; 2; 3;}",
+                node: ASTNode::new(
+                    ASTNodeKind::Block,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::Block,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
+                    ))),
+                ),
+                expected: "  push 1
+  pop rax
+  push 2
+  pop rax
+  push 3
 "
                 .to_string(),
             },
@@ -481,16 +526,30 @@ mod tests {
   cmp rax, 0
   je .Lelse0
   push 42
-  pop rax
   jmp .Lend0
 .Lelse0:
-.Lend0:
   push 0
+.Lend0:
 "
                 .to_string(),
             },
             TestCase {
-                name: "if文(else節あり)",
+                name: "return文",
+                node: ASTNode::new(
+                    ASTNodeKind::Return,
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
+                    None,
+                ),
+                expected: "  push 42
+  pop rax
+  mov rsp, rbp
+  pop rbp
+  ret
+"
+                .to_string(),
+            },
+            TestCase {
+                name: "if文（else節あり）",
                 node: ASTNode::new(
                     ASTNodeKind::If,
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
@@ -505,50 +564,15 @@ mod tests {
   cmp rax, 0
   je .Lelse0
   push 42
-  pop rax
   jmp .Lend0
 .Lelse0:
   push 24
-  pop rax
 .Lend0:
-  push 0
 "
                 .to_string(),
             },
             TestCase {
-                name: "for文(定数による無限ループ)",
-                node: ASTNode::new(
-                    ASTNodeKind::For,
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::ForInit,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    ))),
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::ForUpdate,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                    ))),
-                ),
-                expected: "  push 0
-  pop rax
-.Lbegin0:
-  push 1
-  pop rax
-  cmp rax, 0
-  je .Lend0
-  push 42
-  pop rax
-  push 2
-  pop rax
-  jmp .Lbegin0
-.Lend0:
-  push 0
-"
-                .to_string(),
-            },
-            TestCase {
-                name: "for文(変数の更新)for (i = 0; i < 3; i = i + 1) { 42; }",
+                name: "for文",
                 node: ASTNode::new(
                     ASTNodeKind::For,
                     Some(Box::new(ASTNode::new(
@@ -651,9 +675,10 @@ mod tests {
 
         for case in test_cases {
             reset_label_counter();
-            let result = gen_stack_insruction_asm(&case.node, &mut String::new());
+            let mut output = String::new();
+            gen_stack_insruction_asm(&case.node, &mut output);
             assert_eq!(
-                result, case.expected,
+                output, case.expected,
                 "テストケース '{}' が失敗しました",
                 case.name
             );

@@ -26,6 +26,8 @@ pub enum ASTNodeKind {
     For,
     ForInit,
     ForUpdate,
+
+    Block,
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -66,6 +68,7 @@ impl ASTNode {
 // program    = stmt*
 
 // stmt       = expr ";"
+// | "{" stmt* "}"
 // | "if" "(" expr ")" stmt ("else" stmt)?
 // | "while" "(" expr ")" stmt
 // | "for" "(" expr? ";" expr? ";" expr? ")" stmt
@@ -95,6 +98,24 @@ pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>>
 }
 
 fn stmt(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
+    if Token::consume(token, TokenKind::LBrace) {
+        let mut stmts = vec![];
+        while !Token::consume(token, TokenKind::RBrace) {
+            stmts.push(stmt(token, input));
+        }
+
+        if stmts.is_empty() {
+            return ASTNode::leaf(ASTNodeKind::Block);
+        }
+
+        let mut block = stmts.pop().unwrap();
+        while let Some(stmt) = stmts.pop() {
+            block = ASTNode::new_boxed(ASTNodeKind::Block, Some(stmt), Some(block));
+        }
+
+        return block;
+    }
+
     if Token::consume(token, TokenKind::If) {
         Token::expect(token, TokenKind::LParen, input);
         let cond_node = expr(token, input);
@@ -853,6 +874,89 @@ mod tests {
                                 ))),
                                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                             ))),
+                        ))),
+                    ))),
+                )),
+            },
+            TestCase {
+                name: "空のブロック文が正しくparseされること",
+                token: TestTokenStream::new("{}")
+                    .add(TokenKind::LBrace, 0, 1)
+                    .add(TokenKind::RBrace, 1, 2)
+                    .build(),
+                raw_input: "{}",
+                expected: Box::new(ASTNode::new(ASTNodeKind::Block, None, None)),
+            },
+            TestCase {
+                name: "単一文のブロックが正しくparseされること",
+                token: TestTokenStream::new("{x=1;}")
+                    .add(TokenKind::LBrace, 0, 1)
+                    .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 1, 2)
+                    .add(TokenKind::Assign, 2, 3)
+                    .add(TokenKind::Number(1), 3, 4)
+                    .add(TokenKind::Semicolon, 4, 5)
+                    .add(TokenKind::RBrace, 5, 6)
+                    .build(),
+                raw_input: "{x=1;}",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Assign,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::LocalVariable(0),
+                        None,
+                        None,
+                    ))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                )),
+            },
+            TestCase {
+                name: "複数文のブロックが正しくparseされること",
+                token: TestTokenStream::new("{x=1;y=2;z=3;}")
+                    .add(TokenKind::LBrace, 0, 1)
+                    .add(TokenKind::Identifier(LocalVariable::new("x", 0)), 1, 2)
+                    .add(TokenKind::Assign, 2, 3)
+                    .add(TokenKind::Number(1), 3, 4)
+                    .add(TokenKind::Semicolon, 4, 5)
+                    .add(TokenKind::Identifier(LocalVariable::new("y", 8)), 5, 6)
+                    .add(TokenKind::Assign, 6, 7)
+                    .add(TokenKind::Number(2), 7, 8)
+                    .add(TokenKind::Semicolon, 8, 9)
+                    .add(TokenKind::Identifier(LocalVariable::new("z", 16)), 9, 10)
+                    .add(TokenKind::Assign, 10, 11)
+                    .add(TokenKind::Number(3), 11, 12)
+                    .add(TokenKind::Semicolon, 12, 13)
+                    .add(TokenKind::RBrace, 13, 14)
+                    .build(),
+                raw_input: "{x=1;y=2;z=3;}",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Block,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::Assign,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::LocalVariable(0),
+                            None,
+                            None,
+                        ))),
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                    ))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::Block,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::Assign,
+                            Some(Box::new(ASTNode::new(
+                                ASTNodeKind::LocalVariable(8),
+                                None,
+                                None,
+                            ))),
+                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                        ))),
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::Assign,
+                            Some(Box::new(ASTNode::new(
+                                ASTNodeKind::LocalVariable(16),
+                                None,
+                                None,
+                            ))),
+                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
                         ))),
                     ))),
                 )),
