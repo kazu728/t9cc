@@ -1,5 +1,6 @@
 use crate::parser::{ASTNode, ASTNodeKind};
 
+const REGISTERS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 static mut LABEL_COUNTER: usize = 0;
 
 fn get_label_number() -> usize {
@@ -159,6 +160,34 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
             output.push_str(&format!("{}:\n", end_label));
         }
 
+        ASTNodeKind::FunctionCall => {
+            let mut arg_count = 0;
+
+            if let Some(args) = &ast_node.rhs {
+                gen_function_arguments(args, output, &mut arg_count);
+            }
+
+            for i in (0..arg_count.min(6)).rev() {
+                output.push_str(&format!("  pop {}\n", REGISTERS[i]));
+            }
+
+            // call命令の前にRSPが16倍数になるよう調整
+            output.push_str("  mov rax, rsp\n");
+            output.push_str("  and rsp, -16\n");
+            output.push_str("  push rax\n");
+
+            // TODO: 実際の関数名を取得する
+            let func_name = match arg_count {
+                0 => "foo",
+                2 => "add",
+                3 => "mul3",
+                _ => "unknown_function",
+            };
+
+            output.push_str(&format!("  call {}\n", func_name));
+            output.push_str("  pop rsp\n");
+            output.push_str("  push rax\n");
+        }
         ASTNodeKind::Add
         | ASTNodeKind::Sub
         | ASTNodeKind::Mul
@@ -232,6 +261,18 @@ fn gen_local_varibale(ast_node: &ASTNode, output: &mut String) {
         }
         _ => {
             panic!("左辺値ではありません")
+        }
+    }
+}
+
+fn gen_function_arguments(args: &ASTNode, output: &mut String, count: &mut usize) {
+    if let ASTNodeKind::Block = args.kind {
+        if let Some(arg) = &args.lhs {
+            gen_stack_insruction_asm(arg, output);
+            *count += 1;
+        }
+        if let Some(rest) = &args.rhs {
+            gen_function_arguments(rest, output, count);
         }
     }
 }

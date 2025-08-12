@@ -26,8 +26,8 @@ struct TestResult {
 }
 
 fn main() {
-    let test_file =
-        fs::read_to_string("test/test_cases.toml").expect("test/test_cases.tomlの読み込みに失敗しました");
+    let test_file = fs::read_to_string("test/test_cases.toml")
+        .expect("test/test_cases.tomlの読み込みに失敗しました");
 
     let config: TestConfig =
         toml::from_str(&test_file).expect("test_cases.tomlのパースに失敗しました");
@@ -70,6 +70,33 @@ fn main() {
 fn run_test(test_case: &TestCase) -> TestResult {
     let asm_file = format!("build/{}.s", test_case.name);
     let exe_file = format!("build/{}", test_case.name);
+    let helper_obj = "build/test_helper.o";
+
+    if !std::path::Path::new(helper_obj).exists() {
+        let helper_compile = Command::new("orb")
+            .args(&[
+                "-m",
+                "ubuntu",
+                "exec",
+                "gcc",
+                "-c",
+                "-o",
+                helper_obj,
+                "test/test_helper.c",
+            ])
+            .output();
+
+        if let Err(e) = helper_compile {
+            return TestResult {
+                name: test_case.name.clone(),
+                input: test_case.input.clone(),
+                expected: test_case.expected_output,
+                actual: None,
+                passed: false,
+                error: Some(format!("test_helper.cのコンパイル失敗: {}", e)),
+            };
+        }
+    }
 
     let output = match Command::new("cargo")
         .args(&["run", "--bin", "t9cc", "--", &test_case.input])
@@ -114,7 +141,9 @@ fn run_test(test_case: &TestCase) -> TestResult {
     }
 
     let compile_output = match Command::new("orb")
-        .args(&["-m", "ubuntu", "exec", "gcc", "-o", &exe_file, &asm_file])
+        .args(&[
+            "-m", "ubuntu", "exec", "gcc", "-o", &exe_file, &asm_file, helper_obj,
+        ])
         .output()
     {
         Ok(output) => output,

@@ -19,6 +19,7 @@ pub enum TokenKind<'a> {
     LBrace,    // {
     RBrace,    // }
     Semicolon, // ;
+    Comma,     // ,
 
     Number(i32),                   // 整数トークン
     Identifier(LocalVariable<'a>), // 識別子
@@ -180,6 +181,7 @@ impl<'a> Tokenizer<'a> {
                 '{' => self.parse_single_char_op(i, TokenKind::LBrace),
                 '}' => self.parse_single_char_op(i, TokenKind::RBrace),
                 ';' => self.parse_single_char_op(i, TokenKind::Semicolon),
+                ',' => self.parse_single_char_op(i, TokenKind::Comma),
                 '=' => self.parse_multiple_char_op(i, TokenKind::Assign, TokenKind::Equal),
                 '>' => self.parse_multiple_char_op(i, TokenKind::Greater, TokenKind::GreaterEqual),
                 '<' => self.parse_multiple_char_op(i, TokenKind::Less, TokenKind::LessEqual),

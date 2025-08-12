@@ -28,6 +28,7 @@ pub enum ASTNodeKind {
     ForUpdate,
 
     Block,
+    FunctionCall,
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -81,7 +82,7 @@ impl ASTNode {
 // add        = mul ("+" mul | "-" mul)*
 // mul        = unary ("*" unary | "/" unary)*
 // unary      = ("+" | "-")? primary
-// primary    = num | ident | "(" expr ")"
+// primary    = num | ident ("(" ")")? | "(" expr ")"
 
 pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>> {
     let mut statements: Vec<Box<ASTNode>> = vec![];
@@ -297,7 +298,7 @@ fn unary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     primary(token, input)
 }
 
-// primary = num | identifier |  "(" expr ")"
+// primary = num | ident ("(" (expr ("," expr)*)? ")")? | "(" expr ")"
 fn primary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::LParen) {
         let node = expr(token, input);
@@ -313,6 +314,28 @@ fn primary(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
             }
             TokenKind::Identifier(var) => {
                 *token = t.next;
+                if Token::consume(token, TokenKind::LParen) {
+                    let mut args = Vec::new();
+                    if !Token::consume(token, TokenKind::RParen) {
+                        loop {
+                            args.push(expr(token, input));
+                            if !Token::consume(token, TokenKind::Comma) {
+                                break;
+                            }
+                        }
+                        Token::expect(token, TokenKind::RParen, input);
+                    }
+
+                    let arg_list = args.into_iter().rev().fold(None, |acc, arg| {
+                        Some(ASTNode::new_boxed(ASTNodeKind::Block, Some(arg), acc))
+                    });
+
+                    return ASTNode::new_boxed(
+                        ASTNodeKind::FunctionCall,
+                        Some(ASTNode::leaf(ASTNodeKind::LocalVariable(var.get_offset()))),
+                        arg_list,
+                    );
+                }
                 return ASTNode::leaf(ASTNodeKind::LocalVariable(var.get_offset()));
             }
             _ => unreachable!("{:?}", t),
@@ -461,6 +484,83 @@ mod tests {
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
                 )),
             },
+            TestCase {
+                name: "関数呼び出しを含む式が正しくparseされること",
+                token: TestTokenStream::new("func()+1")
+                    .add(TokenKind::Identifier(LocalVariable::new("func", 0)), 0, 4)
+                    .add(TokenKind::LParen, 4, 5)
+                    .add(TokenKind::RParen, 5, 6)
+                    .add(TokenKind::Plus, 6, 7)
+                    .add(TokenKind::Number(1), 7, 8)
+                    .build(),
+                raw_input: "func() + 1",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Add,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::FunctionCall,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::LocalVariable(0),
+                            None,
+                            None,
+                        ))),
+                        None,
+                    ))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                )),
+            },
+            TestCase {
+                name: "関数呼び出しを含む式が正しくparseされること",
+                token: TestTokenStream::new("func()+1")
+                    .add(TokenKind::Identifier(LocalVariable::new("func", 0)), 0, 4)
+                    .add(TokenKind::LParen, 4, 5)
+                    .add(TokenKind::RParen, 5, 6)
+                    .add(TokenKind::Plus, 6, 7)
+                    .add(TokenKind::Number(1), 7, 8)
+                    .build(),
+                raw_input: "func() + 1",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::Add,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::FunctionCall,
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::LocalVariable(0),
+                            None,
+                            None,
+                        ))),
+                        None,
+                    ))),
+                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                )),
+            },
+            TestCase {
+                name: "引数を持つ関数呼び出しが正しくparseされること",
+                token: TestTokenStream::new("func(1, 2)")
+                    .add(TokenKind::Identifier(LocalVariable::new("func", 0)), 0, 4)
+                    .add(TokenKind::LParen, 4, 5)
+                    .add(TokenKind::Number(1), 5, 6)
+                    .add(TokenKind::Comma, 6, 7)
+                    .add(TokenKind::Number(2), 7, 8)
+                    .add(TokenKind::RParen, 8, 9)
+                    .build(),
+                raw_input: "func(1, 2)",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::FunctionCall,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::LocalVariable(0),
+                        None,
+                        None,
+                    ))),
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::Block,
+                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
+                        Some(Box::new(ASTNode::new(
+                            ASTNodeKind::Block,
+                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
+                            None,
+                        ))),
+                    ))),
+                )),
+            },
         ];
 
         for case in test_cases {
@@ -521,6 +621,24 @@ mod tests {
                 ))),
                 raw_input: "x",
                 expected: Box::new(ASTNode::new(ASTNodeKind::LocalVariable(0), None, None)),
+            },
+            TestCase {
+                name: "関数呼び出しが正しくparseされること",
+                token: TestTokenStream::new("func()")
+                    .add(TokenKind::Identifier(LocalVariable::new("func", 0)), 0, 4)
+                    .add(TokenKind::LParen, 4, 5)
+                    .add(TokenKind::RParen, 5, 6)
+                    .build(),
+                raw_input: "func()",
+                expected: Box::new(ASTNode::new(
+                    ASTNodeKind::FunctionCall,
+                    Some(Box::new(ASTNode::new(
+                        ASTNodeKind::LocalVariable(0),
+                        None,
+                        None,
+                    ))),
+                    None,
+                )),
             },
         ];
 

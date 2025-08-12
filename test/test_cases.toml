@@ -147,3 +147,47 @@ name = "early_return"
 input = "x=5; if(x>0) return 100; return 200;"
 expected_output = 100
 description = "早期return"
+
+# 関数呼び出し（引数なし）
+[[test_cases]]
+name = "function_call_simple"
+input = "foo();"
+expected_output = 42
+description = "単純な関数呼び出し"
+
+[[test_cases]]
+name = "function_call_in_expression"
+input = "x = foo() + 10; x;"
+expected_output = 52
+description = "式内での関数呼び出し"
+
+[[test_cases]]
+name = "function_call_with_variable"
+input = "x = 5; y = foo() + x; y;"
+expected_output = 47
+description = "変数と組み合わせた関数呼び出し"
+
+# 関数呼び出し（引数付き）
+[[test_cases]]
+name = "function_call_with_args"
+input = "add(3, 4);"
+expected_output = 7
+description = "2引数の関数呼び出し"
+
+[[test_cases]]
+name = "function_call_with_expr_args"
+input = "x = 5; add(x, 10);"
+expected_output = 15
+description = "変数を引数とする関数呼び出し"
+
+[[test_cases]]
+name = "function_call_mul3"
+input = "mul3(2, 3, 4);"
+expected_output = 24
+description = "3引数の関数呼び出し"
+
+[[test_cases]]
+name = "function_call_nested"
+input = "add(add(1, 2), 3);"
+expected_output = 6
+description = "ネストした関数呼び出し"
