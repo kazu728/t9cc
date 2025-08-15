@@ -3,191 +3,203 @@
 # 基本的な算術演算
 [[test_cases]]
 name = "single_number"
-input = "42;"
+input = "main() { return 42; }"
 expected_output = 42
 description = "単一の数値"
 
 [[test_cases]]
 name = "addition"
-input = "10+5;"
+input = "main() { return 10+5; }"
 expected_output = 15
 description = "加算"
 
 [[test_cases]]
 name = "subtraction"
-input = "10-5;"
+input = "main() { return 10-5; }"
 expected_output = 5
 description = "減算"
 
 [[test_cases]]
 name = "multiplication"
-input = "6*7;"
+input = "main() { return 6*7; }"
 expected_output = 42
 description = "乗算"
 
 [[test_cases]]
 name = "division"
-input = "20/4;"
+input = "main() { return 20/4; }"
 expected_output = 5
 description = "除算"
 
 [[test_cases]]
 name = "complex_arithmetic"
-input = "2*3+4*8;"
+input = "main() { return 2*3+4*8; }"
 expected_output = 38
 description = "複雑な四則演算"
 
 [[test_cases]]
 name = "parentheses"
-input = "(2+3)*4;"
+input = "main() { return (2+3)*4; }"
 expected_output = 20
 description = "括弧を含む計算"
 
 # 変数操作
 [[test_cases]]
 name = "single_variable"
-input = "x=10; x;"
+input = "main() { x=10; return x; }"
 expected_output = 10
 description = "単一変数の代入と参照"
 
 [[test_cases]]
 name = "multiple_variables"
-input = "x=5; y=x+3; y;"
+input = "main() { x=5; y=x+3; return y; }"
 expected_output = 8
 description = "複数変数の操作"
 
 [[test_cases]]
 name = "variable_update"
-input = "x=5; x=x+10; x;"
+input = "main() { x=5; x=x+10; return x; }"
 expected_output = 15
 description = "変数の更新"
 
 # 比較演算
 [[test_cases]]
 name = "less_than_true"
-input = "5<10;"
+input = "main() { return 5<10; }"
 expected_output = 1
 description = "小なり（真）"
 
 [[test_cases]]
 name = "less_than_false"
-input = "10<5;"
+input = "main() { return 10<5; }"
 expected_output = 0
 description = "小なり（偽）"
 
 [[test_cases]]
 name = "greater_than"
-input = "10>5;"
+input = "main() { return 10>5; }"
 expected_output = 1
 description = "大なり"
 
 [[test_cases]]
 name = "equal"
-input = "10==10;"
+input = "main() { return 10==10; }"
 expected_output = 1
 description = "等しい"
 
 [[test_cases]]
 name = "not_equal"
-input = "10!=5;"
+input = "main() { return 10!=5; }"
 expected_output = 1
 description = "等しくない"
 
 # 制御構造
 [[test_cases]]
 name = "if_true"
-input = "x=10; if(x>5) x=20; x;"
+input = "main() { x=10; if(x>5) x=20; return x; }"
 expected_output = 20
 description = "if文（条件真）"
 
 [[test_cases]]
 name = "if_false"
-input = "x=2; if(x>5) x=20; x;"
+input = "main() { x=2; if(x>5) x=20; return x; }"
 expected_output = 2
 description = "if文（条件偽）"
 
 [[test_cases]]
 name = "if_else_true"
-input = "x=10; if(x>5) x=20; else x=30; x;"
+input = "main() { x=10; if(x>5) x=20; else x=30; return x; }"
 expected_output = 20
 description = "if-else文（条件真）"
 
 [[test_cases]]
 name = "if_else_false"
-input = "x=2; if(x>5) x=20; else x=30; x;"
+input = "main() { x=2; if(x>5) x=20; else x=30; return x; }"
 expected_output = 30
 description = "if-else文（条件偽）"
 
 [[test_cases]]
 name = "while_loop"
-input = "x=0; while(x<5) x=x+1; x;"
+input = "main() { x=0; while(x<5) x=x+1; return x; }"
 expected_output = 5
 description = "whileループ"
 
 [[test_cases]]
 name = "for_loop"
-input = "sum=0; for(i=1; i<=5; i=i+1) sum=sum+i; sum;"
+input = "main() { sum=0; for(i=1; i<=5; i=i+1) sum=sum+i; return sum; }"
 expected_output = 15
 description = "forループ（1から5の合計）"
 
 [[test_cases]]
 name = "nested_block"
-input = "x=1; {y=2; x=x+y;} x;"
+input = "main() { x=1; {y=2; x=x+y;} return x; }"
 expected_output = 3
 description = "ネストされたブロック"
 
 [[test_cases]]
 name = "return_statement"
-input = "x=5; return x+10;"
+input = "main() { x=5; return x+10; }"
 expected_output = 15
 description = "return文"
 
 [[test_cases]]
 name = "early_return"
-input = "x=5; if(x>0) return 100; return 200;"
+input = "main() { x=5; if(x>0) return 100; return 200; }"
 expected_output = 100
 description = "早期return"
 
 # 関数呼び出し（引数なし）
 [[test_cases]]
 name = "function_call_simple"
-input = "foo();"
+input = "main() { return foo(); }"
 expected_output = 42
 description = "単純な関数呼び出し"
 
 [[test_cases]]
 name = "function_call_in_expression"
-input = "x = foo() + 10; x;"
+input = "main() { x = foo() + 10; return x; }"
 expected_output = 52
 description = "式内での関数呼び出し"
 
 [[test_cases]]
 name = "function_call_with_variable"
-input = "x = 5; y = foo() + x; y;"
+input = "main() { x = 5; y = foo() + x; return y; }"
 expected_output = 47
 description = "変数と組み合わせた関数呼び出し"
 
 # 関数呼び出し（引数付き）
 [[test_cases]]
 name = "function_call_with_args"
-input = "add(3, 4);"
+input = "main() { return add(3, 4); }"
 expected_output = 7
 description = "2引数の関数呼び出し"
 
 [[test_cases]]
 name = "function_call_with_expr_args"
-input = "x = 5; add(x, 10);"
+input = "main() { x = 5; return add(x, 10); }"
 expected_output = 15
 description = "変数を引数とする関数呼び出し"
 
 [[test_cases]]
 name = "function_call_mul3"
-input = "mul3(2, 3, 4);"
+input = "main() { return mul3(2, 3, 4); }"
 expected_output = 24
 description = "3引数の関数呼び出し"
 
 [[test_cases]]
 name = "function_call_nested"
-input = "add(add(1, 2), 3);"
+input = "main() { return add(add(1, 2), 3); }"
 expected_output = 6
 description = "ネストした関数呼び出し"
+
+[[test_cases]]
+name = "function_with_params"
+input = "add2(x, y) { return x + y; } main() { return add2(3, 5); }"
+expected_output = 8
+description = "引数付き関数定義"
+
+[[test_cases]]
+name = "recursive_function"
+input = "fact(n) { if (n <= 1) return 1; return n * fact(n - 1); } main() { return fact(5); }"
+expected_output = 120
+description = "再帰関数（階乗）"

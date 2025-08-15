@@ -1,3 +1,5 @@
+use super::error::error_at;
+
 const INITIAL_IDENTIFIER_OFFSET: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +64,10 @@ impl<'a> LocalVariable<'a> {
     }
     pub fn get_offset(&self) -> u32 {
         self.offset
+    }
+
+    pub fn get_name(&self) -> &'a str {
+        self.name
     }
 }
 
@@ -139,6 +145,19 @@ impl<'a> Token<'a> {
             |tok| if tok.kind == kind { Some(()) } else { None },
             &format!("{:?} ではありません", kind),
         );
+    }
+
+    pub fn expect_identifier(token: &mut MaybeToken<'a>, input: &str) -> String {
+        Self::expect_token(
+            token,
+            input,
+            |tok| match &tok.kind {
+                TokenKind::Identifier(_) => Some(tok.input.to_string()),
+                _ => None,
+            },
+            "識別子が必要です",
+        )
+        .unwrap_or_else(|| unreachable!())
     }
 }
 
@@ -298,16 +317,6 @@ impl<'a> Tokenizer<'a> {
             Token::new_maybe_token(single_kind, &self.input[i..i + 1], None)
         }
     }
-}
-
-fn error_at(loc: &str, input: &str, message: &str) {
-    let pos_bytes = loc.as_ptr() as usize - input.as_ptr() as usize;
-    let pos_chars = input[..pos_bytes].chars().count();
-
-    eprintln!("{}", input);
-    eprintln!("{:>1$}", "^", pos_chars + 1);
-
-    panic!("{}", message);
 }
 
 #[cfg(test)]

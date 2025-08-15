@@ -1,6 +1,9 @@
 use crate::parser::{ASTNode, ASTNodeKind};
 
 const REGISTERS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+const MAX_REGISTER_ARGS: usize = 6;
+const STACK_SIZE: usize = 208;
+
 static mut LABEL_COUNTER: usize = 0;
 
 fn get_label_number() -> usize {
@@ -11,29 +14,87 @@ fn get_label_number() -> usize {
     }
 }
 
-pub fn gen_asm(ast_node: &ASTNode, output: &mut String) -> String {
-    gen_stack_insruction_asm(ast_node, output);
-    output.push_str("  pop rax\n");
-    return output.to_string();
+pub fn gen_asm(ast_node: &ASTNode, output: &mut String) {
+    match ast_node.kind {
+        ASTNodeKind::FunctionDef => {
+            let (func_name, params) = match &ast_node.lhs {
+                Some(name_and_params) => match &name_and_params.kind {
+                    ASTNodeKind::FunctionName(name) => {
+                        let mut param_names = Vec::new();
+                        let mut param_node = &name_and_params.lhs;
+
+                        while let Some(node) = param_node {
+                            match &node.kind {
+                                ASTNodeKind::Parameter(param_name) => {
+                                    param_names.push(param_name.clone());
+                                }
+                                _ => panic!("Invalid parameter structure"),
+                            }
+                            param_node = &node.rhs;
+                        }
+                        (name.clone(), param_names)
+                    }
+                    _ => panic!("Invalid function definition structure"),
+                },
+                None => panic!("Invalid function definition structure"),
+            };
+
+            output.push_str(&format!("{}:\n", func_name));
+
+            gen_prolog(output);
+
+            for (i, _param) in params.iter().enumerate() {
+                if i < MAX_REGISTER_ARGS {
+                    let offset = (i + 1) * 8;
+                    output.push_str(&format!("  mov [rbp-{}], {}\n", offset, REGISTERS[i]));
+                }
+            }
+
+            match &ast_node.rhs {
+                Some(body) => {
+                    gen_stack_instruction_asm(body, output);
+                    if !contains_return(body) {
+                        output.push_str("  pop rax\n");
+                        output.push_str("  mov rsp, rbp\n");
+                        output.push_str("  pop rbp\n");
+                        output.push_str("  ret\n");
+                    }
+                }
+                None => {
+                    output.push_str("  mov eax, 0\n");
+                    output.push_str("  mov rsp, rbp\n");
+                    output.push_str("  pop rbp\n");
+                    output.push_str("  ret\n");
+                }
+            }
+        }
+        _ => panic!("Expected function definition"),
+    }
 }
 
-fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
+fn gen_prolog(output: &mut String) {
+    output.push_str("  push rbp\n");
+    output.push_str("  mov rbp, rsp\n");
+    output.push_str(&format!("  sub rsp, {}\n", STACK_SIZE));
+}
+
+fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
     match ast_node.kind {
         ASTNodeKind::Num(n) => {
             output.push_str(format!("  push {}\n", n).as_str());
         }
         ASTNodeKind::LocalVariable(_) => {
-            gen_local_varibale(ast_node, output);
+            gen_local_variable(ast_node, output);
             output.push_str("  pop rax\n");
             output.push_str("  mov rax, [rax]\n");
             output.push_str("  push rax\n");
         }
         ASTNodeKind::Assign => {
             if let Some(lhs) = &ast_node.lhs {
-                gen_local_varibale(lhs, output);
+                gen_local_variable(lhs, output);
             }
             if let Some(rhs) = &ast_node.rhs {
-                gen_stack_insruction_asm(rhs, output);
+                gen_stack_instruction_asm(rhs, output);
             }
 
             output.push_str("  pop rdi\n");
@@ -49,14 +110,14 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
             output.push_str(&format!("{}:\n", begin_label));
 
             if let Some(cond) = &ast_node.lhs {
-                gen_stack_insruction_asm(cond, output);
+                gen_stack_instruction_asm(cond, output);
             }
             output.push_str("  pop rax\n");
             output.push_str("  cmp rax, 0\n");
             output.push_str(&format!("  je {}\n", end_label));
 
             if let Some(body) = &ast_node.rhs {
-                gen_stack_insruction_asm(body, output);
+                gen_stack_instruction_asm(body, output);
                 output.push_str("  pop rax\n");
             }
 
@@ -76,26 +137,26 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
             };
 
             if let Some(init) = &for_init.lhs {
-                gen_stack_insruction_asm(init, output);
+                gen_stack_instruction_asm(init, output);
                 output.push_str("  pop rax\n");
             }
 
             output.push_str(&format!("{}:\n", begin_label));
 
             if let Some(cond) = &for_init.rhs {
-                gen_stack_insruction_asm(cond, output);
+                gen_stack_instruction_asm(cond, output);
                 output.push_str("  pop rax\n");
                 output.push_str("  cmp rax, 0\n");
                 output.push_str(&format!("  je {}\n", end_label));
             }
 
             if let Some(body) = &for_update.rhs {
-                gen_stack_insruction_asm(body, output);
+                gen_stack_instruction_asm(body, output);
                 output.push_str("  pop rax\n");
             }
 
             if let Some(update) = &for_update.lhs {
-                gen_stack_insruction_asm(update, output);
+                gen_stack_instruction_asm(update, output);
                 output.push_str("  pop rax\n");
             }
 
@@ -106,7 +167,7 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
         }
         ASTNodeKind::Return => {
             if let Some(expr) = &ast_node.lhs {
-                gen_stack_insruction_asm(expr, output);
+                gen_stack_instruction_asm(expr, output);
                 output.push_str("  pop rax\n");
                 output.push_str("  mov rsp, rbp\n");
                 output.push_str("  pop rbp\n");
@@ -115,14 +176,14 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
         }
         ASTNodeKind::Block => {
             if let Some(lhs) = &ast_node.lhs {
-                gen_stack_insruction_asm(lhs, output);
+                gen_stack_instruction_asm(lhs, output);
                 if ast_node.rhs.is_some() {
                     // rhsがある場合は、lhsの結果を破棄
                     output.push_str("  pop rax\n");
                 }
             }
             if let Some(rhs) = &ast_node.rhs {
-                gen_stack_insruction_asm(rhs, output);
+                gen_stack_instruction_asm(rhs, output);
             }
             // 空のブロックの場合は0を返す
             if ast_node.lhs.is_none() && ast_node.rhs.is_none() {
@@ -140,20 +201,20 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
             };
 
             if let Some(cond) = &ast_node.lhs {
-                gen_stack_insruction_asm(cond, output);
+                gen_stack_instruction_asm(cond, output);
             }
             output.push_str("  pop rax\n");
             output.push_str("  cmp rax, 0\n");
             output.push_str(&format!("  je {}\n", else_label));
 
             if let Some(then_stmt) = &if_body.lhs {
-                gen_stack_insruction_asm(then_stmt, output);
+                gen_stack_instruction_asm(then_stmt, output);
             }
             output.push_str(&format!("  jmp {}\n", end_label));
             output.push_str(&format!("{}:\n", else_label));
 
             if let Some(else_stmt) = &if_body.rhs {
-                gen_stack_insruction_asm(else_stmt, output);
+                gen_stack_instruction_asm(else_stmt, output);
             } else {
                 output.push_str("  push 0\n"); // else節がない場合は0をpush
             }
@@ -176,12 +237,13 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
             output.push_str("  and rsp, -16\n");
             output.push_str("  push rax\n");
 
-            // TODO: 実際の関数名を取得する
-            let func_name = match arg_count {
-                0 => "foo",
-                2 => "add",
-                3 => "mul3",
-                _ => "unknown_function",
+            let func_name = if let Some(func_node) = &ast_node.lhs {
+                match &func_node.kind {
+                    ASTNodeKind::FunctionName(name) => name.as_str(),
+                    _ => unreachable!(),
+                }
+            } else {
+                "unknown_function"
             };
 
             output.push_str(&format!("  call {}\n", func_name));
@@ -199,10 +261,10 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
         | ASTNodeKind::Greater
         | ASTNodeKind::GreaterEqual => {
             if let Some(lhs) = &ast_node.lhs {
-                gen_stack_insruction_asm(lhs, output);
+                gen_stack_instruction_asm(lhs, output);
             }
             if let Some(rhs) = &ast_node.rhs {
-                gen_stack_insruction_asm(rhs, output);
+                gen_stack_instruction_asm(rhs, output);
             }
             output.push_str("  pop rdi\n");
             output.push_str("  pop rax\n");
@@ -252,7 +314,7 @@ fn gen_stack_insruction_asm(ast_node: &ASTNode, output: &mut String) {
     }
 }
 
-fn gen_local_varibale(ast_node: &ASTNode, output: &mut String) {
+fn gen_local_variable(ast_node: &ASTNode, output: &mut String) {
     match ast_node.kind {
         ASTNodeKind::LocalVariable(offset) => {
             output.push_str("  mov rax, rbp\n");
@@ -260,23 +322,44 @@ fn gen_local_varibale(ast_node: &ASTNode, output: &mut String) {
             output.push_str("  push rax\n");
         }
         _ => {
-            panic!("左辺値ではありません")
+            panic!("Not an lvalue")
         }
     }
 }
 
 fn gen_function_arguments(args: &ASTNode, output: &mut String, count: &mut usize) {
-    if let ASTNodeKind::Block = args.kind {
-        if let Some(arg) = &args.lhs {
-            gen_stack_insruction_asm(arg, output);
-            *count += 1;
+    match args.kind {
+        ASTNodeKind::Block => {
+            if let Some(arg) = &args.lhs {
+                gen_stack_instruction_asm(arg, output);
+                *count += 1;
+            }
+            if let Some(rest) = &args.rhs {
+                gen_function_arguments(rest, output, count);
+            }
         }
-        if let Some(rest) = &args.rhs {
-            gen_function_arguments(rest, output, count);
-        }
+        _ => panic!("Expected block for function arguments"),
     }
 }
 
+fn contains_return(ast_node: &ASTNode) -> bool {
+    match ast_node.kind {
+        ASTNodeKind::Return => true,
+        ASTNodeKind::Block => {
+            if let Some(lhs) = &ast_node.lhs {
+                if contains_return(lhs) {
+                    return true;
+                }
+            }
+            if let Some(rhs) = &ast_node.rhs {
+                contains_return(rhs)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gen_stack_insruction_asm() {
+    fn test_gen_stack_instruction_asm() {
         struct TestCase {
             name: &'static str,
             node: ASTNode,
@@ -478,7 +561,7 @@ mod tests {
         for case in test_cases {
             reset_label_counter();
             let mut output = String::new();
-            gen_stack_insruction_asm(&case.node, &mut output);
+            gen_stack_instruction_asm(&case.node, &mut output);
             assert_eq!(
                 output, case.expected,
                 "テストケース '{}' が失敗しました",
@@ -717,7 +800,7 @@ mod tests {
         for case in test_cases {
             reset_label_counter();
             let mut output = String::new();
-            gen_stack_insruction_asm(&case.node, &mut output);
+            gen_stack_instruction_asm(&case.node, &mut output);
             assert_eq!(
                 output, case.expected,
                 "テストケース '{}' が失敗しました",

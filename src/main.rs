@@ -13,25 +13,16 @@ fn main() {
     let input = args[1].as_str();
     let token = Tokenizer::new(input).tokenize();
 
-    let programs = program(&mut Some(Box::new(token)), input);
+    let functions = program(&mut Some(Box::new(token)), input);
 
     let mut output = String::new();
 
     output.push_str(".intel_syntax noprefix\n");
     output.push_str(".global main\n");
-    output.push_str("main:\n");
 
-    output.push_str("  push rbp\n");
-    output.push_str("  mov rbp, rsp\n");
-    output.push_str("  sub rsp, 208\n");
-
-    for program in programs {
-        gen_asm(&program, &mut output);
+    for function in functions {
+        gen_asm(&function, &mut output);
     }
-
-    output.push_str("  mov rsp, rbp\n");
-    output.push_str("  pop rbp\n");
-    output.push_str("  ret\n");
 
     write_asm("build/tmp.s", output).unwrap();
 }
