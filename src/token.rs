@@ -15,6 +15,7 @@ pub enum TokenKind<'a> {
     Greater,      // >
     GreaterEqual, // >=
     Assign,       // =
+    Ampersand,    // &
 
     LParen,    // (
     RParen,    // )
@@ -204,6 +205,7 @@ impl<'a> Tokenizer<'a> {
                 '=' => self.parse_multiple_char_op(i, TokenKind::Assign, TokenKind::Equal),
                 '>' => self.parse_multiple_char_op(i, TokenKind::Greater, TokenKind::GreaterEqual),
                 '<' => self.parse_multiple_char_op(i, TokenKind::Less, TokenKind::LessEqual),
+                '&' => self.parse_single_char_op(i, TokenKind::Ampersand),
                 '!' => {
                     self.chars.next();
                     if let Some((_, '=')) = self.chars.peek() {

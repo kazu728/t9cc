@@ -203,3 +203,16 @@ name = "recursive_function"
 input = "fact(n) { if (n <= 1) return 1; return n * fact(n - 1); } main() { return fact(5); }"
 expected_output = 120
 description = "再帰関数（階乗）"
+
+# ポインタ演算
+[[test_cases]]
+name = "pointer_basic"
+input = "main() { x = 3; y = &x; return *y; }"
+expected_output = 3
+description = "基本的なポインタ操作（アドレス取得と参照）"
+
+[[test_cases]]
+name = "pointer_indirect_access"
+input = "main() { x = 3; y = 5; z = &y + 8; return *z; }"
+expected_output = 3
+description = "ポインタによる間接アクセス（スタック上の変数）"

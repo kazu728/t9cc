@@ -47,6 +47,8 @@ pub enum ASTNodeKind {
 
     LocalVariable(u32), // ローカル変数のベースポインタからのオフセット,
     Assign,
+    Addr,
+    Deref,
 
     Return,
     If,
@@ -351,6 +353,12 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
     } else if Token::consume(token, TokenKind::Minus) {
         let node = primary(token, input, scope);
         return ASTNode::binary(ASTNodeKind::Sub, ASTNode::leaf(ASTNodeKind::Num(0)), node);
+    } else if Token::consume(token, TokenKind::Star) {
+        let node = unary(token, input, scope);
+        return ASTNode::unary(ASTNodeKind::Deref, node);
+    } else if Token::consume(token, TokenKind::Ampersand) {
+        let node = unary(token, input, scope);
+        return ASTNode::unary(ASTNodeKind::Addr, node);
     }
     primary(token, input, scope)
 }

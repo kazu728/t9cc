@@ -310,6 +310,19 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
             }
             output.push_str("  push rax\n");
         }
+        ASTNodeKind::Addr => {
+            if let Some(lhs) = &ast_node.lhs {
+                gen_local_variable(lhs, output);
+            }
+        }
+        ASTNodeKind::Deref => {
+            if let Some(lhs) = &ast_node.lhs {
+                gen_stack_instruction_asm(lhs, output);
+            }
+            output.push_str("  pop rax\n");
+            output.push_str("  mov rax, [rax]\n");
+            output.push_str("  push rax\n");
+        }
         _ => unreachable!("Unhandled node kind: {:?}", ast_node.kind),
     }
 }
