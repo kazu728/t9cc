@@ -323,6 +323,12 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
             output.push_str("  mov rax, [rax]\n");
             output.push_str("  push rax\n");
         }
+        ASTNodeKind::VarDecl => {
+            // 変数宣言は実際にはアセンブリコードを生成しない
+            // スタックバランスのために0をプッシュ
+            // TODO: 全て値を返す設計を見直す
+            output.push_str("  push 0\n");
+        }
         _ => unreachable!("Unhandled node kind: {:?}", ast_node.kind),
     }
 }

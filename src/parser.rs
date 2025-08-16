@@ -64,6 +64,7 @@ pub enum ASTNodeKind {
     FunctionDef,
     FunctionName(String),
     Parameter(String),
+    VarDecl, // 変数宣言
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -132,6 +133,7 @@ pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>>
 }
 
 fn function_def(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
+    Token::expect(token, TokenKind::Int, input);
     let function_name = Token::expect_identifier(token, input);
 
     Token::expect(token, TokenKind::LParen, input);
@@ -168,6 +170,13 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
         }
 
         return build_block_ast(stmts);
+    }
+
+    if Token::consume(token, TokenKind::Int) {
+        let var_name = Token::expect_identifier(token, input);
+        scope.add_variable(var_name);
+        Token::expect(token, TokenKind::Semicolon, input);
+        return ASTNode::leaf(ASTNodeKind::VarDecl);
     }
 
     if Token::consume(token, TokenKind::If) {
@@ -405,10 +414,7 @@ fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
 
                 match scope.get_variable(&var_name) {
                     Some(offset) => return ASTNode::leaf(ASTNodeKind::LocalVariable(offset)),
-                    None => {
-                        let offset = scope.add_variable(var_name);
-                        return ASTNode::leaf(ASTNodeKind::LocalVariable(offset));
-                    }
+                    None => panic!("未定義の変数: {}", var_name),
                 }
             }
             _ => unreachable!("{:?}", t),
@@ -427,6 +433,7 @@ fn parse_parameters(
 
     if !Token::consume(token, TokenKind::RParen) {
         loop {
+            Token::expect(token, TokenKind::Int, input);
             let param_name = Token::expect_identifier(token, input);
             scope.add_variable(param_name.clone());
             params.push(param_name);
@@ -521,6 +528,7 @@ mod tests {
     #[test]
     fn test_expr() {
         let mut scope = FunctionScope::new();
+        scope.add_variable("x".to_string());
 
         let test_cases = vec![
             TestCase {
@@ -775,6 +783,7 @@ mod tests {
 
         for case in test_cases {
             let mut scope = FunctionScope::new();
+            scope.add_variable("x".to_string());
             let mut token = case.token;
             let result = primary(&mut token, case.raw_input, &mut scope);
             assert_eq!(result, case.expected);
@@ -879,6 +888,7 @@ mod tests {
 
         for case in test_cases {
             let mut scope = FunctionScope::new();
+            scope.add_variable("x".to_string());
             let mut token = case.token;
             let result = assign(&mut token, case.raw_input, &mut scope);
             assert_eq!(result, case.expected);
@@ -1222,6 +1232,10 @@ mod tests {
 
         for case in test_cases {
             let mut scope = FunctionScope::new();
+            scope.add_variable("i".to_string()); // オフセット 8
+            scope.add_variable("x".to_string()); // オフセット 16
+            scope.add_variable("y".to_string()); // オフセット 24
+            scope.add_variable("z".to_string()); // オフセット 32
             let mut token = case.token;
             let result = stmt(&mut token, case.raw_input, &mut scope);
             assert_eq!(result, case.expected);

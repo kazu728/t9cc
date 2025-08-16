@@ -27,6 +27,7 @@ pub enum TokenKind<'a> {
     Number(i32),                   // 整数トークン
     Identifier(LocalVariable<'a>), // 識別子
 
+    Int,    // int型宣言
     Return, // return文
     If,     // if文
     Else,   // else文
@@ -269,6 +270,7 @@ impl<'a> Tokenizer<'a> {
         let name = &self.input[start..end];
 
         match name {
+            "int" => Token::new_maybe_token(TokenKind::Int, name, None),
             "return" => Token::new_maybe_token(TokenKind::Return, name, None),
             "if" => Token::new_maybe_token(TokenKind::If, name, None),
             "else" => Token::new_maybe_token(TokenKind::Else, name, None),
