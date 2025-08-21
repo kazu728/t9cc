@@ -1,8 +1,37 @@
 use super::token::{Token, TokenKind};
 use std::collections::HashMap;
+use std::iter;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeKind {
+    Int,
+    Ptr,
+}
+
+#[derive(Debug, Clone)]
+pub struct Type {
+    pub kind: TypeKind,
+    pub ptr_to: Option<Box<Type>>,
+}
+
+impl Type {
+    pub fn new_int() -> Self {
+        Type {
+            kind: TypeKind::Int,
+            ptr_to: None,
+        }
+    }
+
+    pub fn new_ptr(base_type: Type) -> Self {
+        Type {
+            kind: TypeKind::Ptr,
+            ptr_to: Some(Box::new(base_type)),
+        }
+    }
+}
 
 struct FunctionScope {
-    variables: HashMap<String, u32>,
+    variables: HashMap<String, (u32, Type)>,
     next_offset: u32,
 }
 
@@ -14,19 +43,19 @@ impl FunctionScope {
         }
     }
 
-    fn add_variable(&mut self, name: String) -> u32 {
-        if let Some(&offset) = self.variables.get(&name) {
-            offset
+    fn add_variable(&mut self, name: String, var_type: Type) -> u32 {
+        if let Some((offset, _)) = self.variables.get(&name) {
+            *offset
         } else {
             let offset = self.next_offset;
-            self.variables.insert(name, offset);
+            self.variables.insert(name, (offset, var_type));
             self.next_offset += 8;
             offset
         }
     }
 
-    fn get_variable(&self, name: &str) -> Option<u32> {
-        self.variables.get(name).copied()
+    fn get_variable(&self, name: &str) -> Option<&(u32, Type)> {
+        self.variables.get(name)
     }
 }
 
@@ -173,8 +202,14 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
     }
 
     if Token::consume(token, TokenKind::Int) {
+        let ptr_count =
+            iter::from_fn(|| Token::consume(token, TokenKind::Star).then_some(())).count();
+
         let var_name = Token::expect_identifier(token, input);
-        scope.add_variable(var_name);
+
+        let var_type = (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc));
+
+        scope.add_variable(var_name, var_type);
         Token::expect(token, TokenKind::Semicolon, input);
         return ASTNode::leaf(ASTNodeKind::VarDecl);
     }
@@ -413,7 +448,9 @@ fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
                 }
 
                 match scope.get_variable(&var_name) {
-                    Some(offset) => return ASTNode::leaf(ASTNodeKind::LocalVariable(offset)),
+                    Some((offset, _type)) => {
+                        return ASTNode::leaf(ASTNodeKind::LocalVariable(*offset))
+                    }
                     None => panic!("未定義の変数: {}", var_name),
                 }
             }
@@ -435,7 +472,7 @@ fn parse_parameters(
         loop {
             Token::expect(token, TokenKind::Int, input);
             let param_name = Token::expect_identifier(token, input);
-            scope.add_variable(param_name.clone());
+            scope.add_variable(param_name.clone(), Type::new_int());
             params.push(param_name);
 
             if !Token::consume(token, TokenKind::Comma) {

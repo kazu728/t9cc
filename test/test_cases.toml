@@ -216,3 +216,22 @@ name = "pointer_indirect_access"
 input = "int main() { int x; int y; int z; x = 3; y = 5; z = &y + 8; return *z; }"
 expected_output = 3
 description = "ポインタによる間接アクセス（スタック上の変数）"
+
+# ポインタ型宣言と代入のテスト（ステップ18）
+[[test_cases]]
+name = "pointer_type_declaration"
+input = "int main() { int x; int *y; y = &x; *y = 3; return x; }"
+expected_output = 3
+description = "ポインタ型宣言と間接代入"
+
+[[test_cases]]
+name = "multiple_pointer_levels"
+input = "int main() { int x; int *y; int **z; x = 42; y = &x; z = &y; return **z; }"
+expected_output = 42
+description = "多重ポインタ（ポインタのポインタ）"
+
+[[test_cases]]
+name = "pointer_assignment_chain"
+input = "int main() { int x; int *y; int *z; x = 5; y = &x; z = y; *z = 10; return x; }"
+expected_output = 10
+description = "ポインタ変数同士の代入と間接代入"

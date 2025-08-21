@@ -340,6 +340,11 @@ fn gen_local_variable(ast_node: &ASTNode, output: &mut String) {
             output.push_str(format!("  sub rax, {}\n", offset).as_str());
             output.push_str("  push rax\n");
         }
+        ASTNodeKind::Deref => {
+            if let Some(lhs) = &ast_node.lhs {
+                gen_stack_instruction_asm(lhs, output);
+            }
+        }
         _ => {
             panic!("Not an lvalue")
         }
