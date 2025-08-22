@@ -1,4 +1,4 @@
-use crate::parser::{ASTNode, ASTNodeKind};
+use crate::parser::{ASTNode, ASTNodeKind, TypeKind};
 
 const REGISTERS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 const MAX_REGISTER_ARGS: usize = 6;
@@ -259,7 +259,9 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
         | ASTNodeKind::Less
         | ASTNodeKind::LessEqual
         | ASTNodeKind::Greater
-        | ASTNodeKind::GreaterEqual => {
+        | ASTNodeKind::GreaterEqual
+        | ASTNodeKind::PtrAdd
+        | ASTNodeKind::PtrSub => {
             if let Some(lhs) = &ast_node.lhs {
                 gen_stack_instruction_asm(lhs, output);
             }
@@ -271,6 +273,32 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
             match ast_node.kind {
                 ASTNodeKind::Add => output.push_str("  add rax, rdi\n"),
                 ASTNodeKind::Sub => output.push_str("  sub rax, rdi\n"),
+                ASTNodeKind::PtrAdd => {
+                    if let Some(ref lhs_node) = ast_node.lhs {
+                        if let Some(ref node_type) = lhs_node.node_type {
+                            if let Some(ref ptr_to) = node_type.ptr_to {
+                                match ptr_to.kind {
+                                    TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
+                                    TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
+                                }
+                            }
+                        }
+                    }
+                    output.push_str("  add rax, rdi\n");
+                }
+                ASTNodeKind::PtrSub => {
+                    if let Some(ref lhs_node) = ast_node.lhs {
+                        if let Some(ref node_type) = lhs_node.node_type {
+                            if let Some(ref ptr_to) = node_type.ptr_to {
+                                match ptr_to.kind {
+                                    TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
+                                    TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
+                                }
+                            }
+                        }
+                    }
+                    output.push_str("  sub rax, rdi\n");
+                }
                 ASTNodeKind::Mul => output.push_str("  imul rax, rdi\n"),
                 ASTNodeKind::Equal => {
                     output.push_str("  cmp rax, rdi\n");

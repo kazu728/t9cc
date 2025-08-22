@@ -213,7 +213,7 @@ description = "基本的なポインタ操作（アドレス取得と参照）"
 
 [[test_cases]]
 name = "pointer_indirect_access"
-input = "int main() { int x; int y; int z; x = 3; y = 5; z = &y + 8; return *z; }"
+input = "int main() { int x; int y; int z; x = 3; y = 5; z = &y + 2; return *z; }"
 expected_output = 3
 description = "ポインタによる間接アクセス（スタック上の変数）"
 
@@ -235,3 +235,33 @@ name = "pointer_assignment_chain"
 input = "int main() { int x; int *y; int *z; x = 5; y = &x; z = y; *z = 10; return x; }"
 expected_output = 10
 description = "ポインタ変数同士の代入と間接代入"
+
+# ポインタ演算のテスト
+[[test_cases]]
+name = "pointer_arithmetic_basic"
+input = """
+int main() {
+    int *p;
+    alloc4(&p, 1, 2, 4, 8);
+    int *q;
+    q = p + 2;
+    return *q;
+}
+"""
+expected_output = 4
+description = "基本的なポインタ演算（p+2）"
+
+[[test_cases]]
+name = "pointer_arithmetic_subtraction"
+input = """
+int main() {
+    int *p;
+    alloc4(&p, 1, 2, 4, 8);
+    int *q;
+    q = p + 3;
+    q = q - 1;
+    return *q;
+}
+"""
+expected_output = 4
+description = "ポインタ演算での減算（p+3-1）"
