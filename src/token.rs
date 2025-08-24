@@ -33,6 +33,7 @@ pub enum TokenKind<'a> {
     Else,   // else文
     While,  // while文
     For,    // for文
+    Sizeof, // sizeof演算子
 
     Begin, // 入力の始まりを表すトークン
 }
@@ -276,6 +277,7 @@ impl<'a> Tokenizer<'a> {
             "else" => Token::new_maybe_token(TokenKind::Else, name, None),
             "while" => Token::new_maybe_token(TokenKind::While, name, None),
             "for" => Token::new_maybe_token(TokenKind::For, name, None),
+            "sizeof" => Token::new_maybe_token(TokenKind::Sizeof, name, None),
             _ => {
                 let offset = if let Some(existing_offset) = self.find_variable(name) {
                     existing_offset

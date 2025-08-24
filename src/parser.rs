@@ -32,6 +32,13 @@ impl Type {
     pub fn is_pointer(&self) -> bool {
         matches!(self.kind, TypeKind::Ptr)
     }
+
+    pub fn sizeof(&self) -> i32 {
+        match self.kind {
+            TypeKind::Int => 4,
+            TypeKind::Ptr => 8,
+        }
+    }
 }
 
 struct FunctionScope {
@@ -522,6 +529,16 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
             addr_node.node_type = Some(Type::new_ptr(node_type.clone()));
         }
         return addr_node;
+    } else if Token::consume(token, TokenKind::Sizeof) {
+        let node = unary(token, input, scope);
+        let size = node.node_type.as_ref().map_or(4, |t| t.sizeof());
+
+        return Box::new(ASTNode::new_with_type(
+            ASTNodeKind::Num(size),
+            None,
+            None,
+            Some(Type::new_int()),
+        ));
     }
     primary(token, input, scope)
 }
@@ -747,7 +764,7 @@ mod tests {
                 expected: ASTNode::new_binary_with_type(
                     ASTNodeKind::Mul,
                     {
-                        let mut sub_node = ASTNode::new(
+                        let sub_node = ASTNode::new(
                             ASTNodeKind::Sub,
                             Some(ASTNode::new_num_with_type(0)),
                             Some(ASTNode::new_num_with_type(1)),
@@ -767,7 +784,7 @@ mod tests {
                     .build(),
                 raw_input: "1 <= 2",
                 expected: {
-                    let mut node = ASTNode::new(
+                    let node = ASTNode::new(
                         ASTNodeKind::LessEqual,
                         Some(ASTNode::new_num_with_type(1)),
                         Some(ASTNode::new_num_with_type(2)),
@@ -793,7 +810,7 @@ mod tests {
                     .build(),
                 raw_input: "x = 1",
                 expected: {
-                    let mut assign_node = ASTNode::new(
+                    let assign_node = ASTNode::new(
                         ASTNodeKind::Assign,
                         Some(ASTNode::new_local_var_with_type(8, Type::new_int())),
                         Some(ASTNode::new_num_with_type(1)),

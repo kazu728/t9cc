@@ -265,3 +265,34 @@ int main() {
 """
 expected_output = 4
 description = "ポインタ演算での減算（p+3-1）"
+
+# sizeof演算子のテスト
+[[test_cases]]
+name = "sizeof_int"
+input = "int main() { int x; return sizeof(x); }"
+expected_output = 4
+description = "sizeof演算子でint変数のサイズを取得"
+
+[[test_cases]]
+name = "sizeof_pointer"
+input = "int main() { int *y; return sizeof(y); }"
+expected_output = 8
+description = "sizeof演算子でポインタのサイズを取得"
+
+[[test_cases]]
+name = "sizeof_expression"
+input = "int main() { int x; return sizeof(x + 3); }"
+expected_output = 4
+description = "sizeof演算子で式の型のサイズを取得"
+
+[[test_cases]]
+name = "sizeof_no_parentheses"
+input = "int main() { int x; return sizeof x; }"
+expected_output = 4
+description = "sizeof演算子（括弧なし）"
+
+[[test_cases]]
+name = "sizeof_in_expression"
+input = "int main() { int x; int *p; return sizeof(x) + sizeof(p); }"
+expected_output = 12
+description = "sizeof演算子を式の中で使用"
