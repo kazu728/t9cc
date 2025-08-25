@@ -5,7 +5,6 @@ use t9cc::token::Tokenizer;
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
-    print!("{:?}", args);
     if args.len() != 2 {
         eprintln!("引数の個数が正しくありません");
         std::process::exit(1);

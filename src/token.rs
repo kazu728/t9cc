@@ -21,6 +21,8 @@ pub enum TokenKind<'a> {
     RParen,    // )
     LBrace,    // {
     RBrace,    // }
+    LBracket,  // [
+    RBracket,  // ]
     Semicolon, // ;
     Comma,     // ,
 
@@ -202,6 +204,8 @@ impl<'a> Tokenizer<'a> {
                 ')' => self.parse_single_char_op(i, TokenKind::RParen),
                 '{' => self.parse_single_char_op(i, TokenKind::LBrace),
                 '}' => self.parse_single_char_op(i, TokenKind::RBrace),
+                '[' => self.parse_single_char_op(i, TokenKind::LBracket),
+                ']' => self.parse_single_char_op(i, TokenKind::RBracket),
                 ';' => self.parse_single_char_op(i, TokenKind::Semicolon),
                 ',' => self.parse_single_char_op(i, TokenKind::Comma),
                 '=' => self.parse_multiple_char_op(i, TokenKind::Assign, TokenKind::Equal),

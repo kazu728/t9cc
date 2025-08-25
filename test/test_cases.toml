@@ -167,6 +167,31 @@ input = "int main() { int x; int y; x = 5; y = foo() + x; return y; }"
 expected_output = 47
 description = "変数と組み合わせた関数呼び出し"
 
+# 配列操作
+[[test_cases]]
+name = "array_declaration_and_assignment"
+input = "int main() { int a[10]; a[0] = 5; return a[0]; }"
+expected_output = 5
+description = "配列の宣言と代入"
+
+[[test_cases]]
+name = "array_multiple_elements"
+input = "int main() { int a[10]; a[0] = 1; a[1] = 2; a[2] = 3; return a[1]; }"
+expected_output = 2
+description = "配列の複数要素への代入とアクセス"
+
+[[test_cases]]
+name = "array_with_expression_index"
+input = "int main() { int a[10]; int i; i = 1; a[i] = 42; return a[1]; }"
+expected_output = 42
+description = "変数を使った配列インデックス"
+
+[[test_cases]]
+name = "array_to_pointer_conversion"
+input = "int main() { int a[2]; *a = 1; *(a + 1) = 2; int *p; p = a; return *p + *(p + 1); }"
+expected_output = 3
+description = "配列からポインタへの暗黙の型変換"
+
 # 関数呼び出し（引数付き）
 [[test_cases]]
 name = "function_call_with_args"
@@ -296,3 +321,15 @@ name = "sizeof_in_expression"
 input = "int main() { int x; int *p; return sizeof(x) + sizeof(p); }"
 expected_output = 12
 description = "sizeof演算子を式の中で使用"
+
+[[test_cases]]
+name = "sizeof_array"
+input = "int main() { int a[5]; return sizeof(a); }"
+expected_output = 20
+description = "sizeof演算子で配列のサイズを取得（配列はポインタに変換されない）"
+
+[[test_cases]]
+name = "address_of_array"
+input = "int main() { int a[2]; int *p; p = &a[0]; *p = 42; return a[0]; }"
+expected_output = 42
+description = "配列要素のアドレス取得"

@@ -85,9 +85,23 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
         }
         ASTNodeKind::LocalVariable(_) => {
             gen_local_variable(ast_node, output);
-            output.push_str("  pop rax\n");
-            output.push_str("  mov rax, [rax]\n");
-            output.push_str("  push rax\n");
+            if let Some(node_type) = &ast_node.node_type {
+                match node_type.kind {
+                    TypeKind::Array => {
+                        // 配列の場合はアドレスをそのまま使用（decay to pointer）
+                        // gen_local_variableがアドレスをプッシュ済みなので何もしない
+                    }
+                    _ => {
+                        output.push_str("  pop rax\n");
+                        output.push_str("  mov rax, [rax]\n");
+                        output.push_str("  push rax\n");
+                    }
+                }
+            } else {
+                output.push_str("  pop rax\n");
+                output.push_str("  mov rax, [rax]\n");
+                output.push_str("  push rax\n");
+            }
         }
         ASTNodeKind::Assign => {
             if let Some(lhs) = &ast_node.lhs {
@@ -280,6 +294,14 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
                                 match ptr_to.kind {
                                     TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
                                     TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
+                                    TypeKind::Array => match &ptr_to.kind {
+                                        TypeKind::Int => output.push_str("  shl rdi, 2\n"),
+                                        TypeKind::Ptr => output.push_str("  shl rdi, 3\n"),
+                                        _ => output.push_str(&format!(
+                                            "  imul rdi, {}\n",
+                                            ptr_to.sizeof()
+                                        )),
+                                    },
                                 }
                             }
                         }
@@ -293,6 +315,14 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
                                 match ptr_to.kind {
                                     TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
                                     TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
+                                    TypeKind::Array => match &ptr_to.kind {
+                                        TypeKind::Int => output.push_str("  shl rdi, 2\n"),
+                                        TypeKind::Ptr => output.push_str("  shl rdi, 3\n"),
+                                        _ => output.push_str(&format!(
+                                            "  imul rdi, {}\n",
+                                            ptr_to.sizeof()
+                                        )),
+                                    },
                                 }
                             }
                         }

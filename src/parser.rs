@@ -6,12 +6,14 @@ use std::iter;
 pub enum TypeKind {
     Int,
     Ptr,
+    Array,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Type {
     pub kind: TypeKind,
     pub ptr_to: Option<Box<Type>>,
+    pub array_size: Option<usize>,
 }
 
 impl Type {
@@ -19,6 +21,7 @@ impl Type {
         Type {
             kind: TypeKind::Int,
             ptr_to: None,
+            array_size: None,
         }
     }
 
@@ -26,6 +29,15 @@ impl Type {
         Type {
             kind: TypeKind::Ptr,
             ptr_to: Some(Box::new(base_type)),
+            array_size: None,
+        }
+    }
+
+    pub fn new_array(element_type: Type, size: usize) -> Self {
+        Type {
+            kind: TypeKind::Array,
+            ptr_to: Some(Box::new(element_type)),
+            array_size: Some(size),
         }
     }
 
@@ -33,10 +45,34 @@ impl Type {
         matches!(self.kind, TypeKind::Ptr)
     }
 
+    pub fn is_array(&self) -> bool {
+        matches!(self.kind, TypeKind::Array)
+    }
+
+    pub fn decay_array_to_pointer(&self) -> Type {
+        match self.kind {
+            TypeKind::Array => {
+                if let Some(element_type) = &self.ptr_to {
+                    Type::new_ptr((**element_type).clone())
+                } else {
+                    panic!("Invalid array type: no element type");
+                }
+            }
+            _ => self.clone(),
+        }
+    }
+
     pub fn sizeof(&self) -> i32 {
         match self.kind {
             TypeKind::Int => 4,
             TypeKind::Ptr => 8,
+            TypeKind::Array => {
+                if let (Some(element_type), Some(array_size)) = (&self.ptr_to, self.array_size) {
+                    element_type.sizeof() * array_size as i32
+                } else {
+                    panic!("Invalid array type");
+                }
+            }
         }
     }
 }
@@ -59,8 +95,10 @@ impl FunctionScope {
             *offset
         } else {
             let offset = self.next_offset;
+            let type_size = var_type.sizeof() as u32;
+            let aligned_size = (type_size + 7) & !7;
             self.variables.insert(name, (offset, var_type));
-            self.next_offset += 8;
+            self.next_offset += aligned_size;
             offset
         }
     }
@@ -195,6 +233,15 @@ impl ASTNode {
     pub fn unary(kind: ASTNodeKind, child: Box<ASTNode>) -> Box<ASTNode> {
         Box::new(ASTNode::new(kind, Some(child), None))
     }
+
+    pub fn decay_array_type(&mut self) {
+        if let Some(ref node_type) = self.node_type {
+            if node_type.is_array() {
+                let new_type = node_type.decay_array_to_pointer();
+                self.node_type = Some(new_type);
+            }
+        }
+    }
 }
 
 // program    = function_def*
@@ -268,12 +315,36 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
     }
 
     if Token::consume(token, TokenKind::Int) {
+        fn create_base_type(ptr_count: usize) -> Type {
+            (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc))
+        }
+
+        fn parse_array_size(token: &mut Option<Box<Token>>, input: &str) -> Option<usize> {
+            if let Some(size_token) = token.take() {
+                if let TokenKind::Number(array_size) = size_token.kind {
+                    *token = size_token.next;
+                    Token::expect(token, TokenKind::RBracket, input);
+                    Some(array_size as usize)
+                } else {
+                    panic!("配列のサイズは数値である必要があります");
+                }
+            } else {
+                panic!("配列のサイズが指定されていません");
+            }
+        }
+
         let ptr_count =
             iter::from_fn(|| Token::consume(token, TokenKind::Star).then_some(())).count();
 
         let var_name = Token::expect_identifier(token, input);
 
-        let var_type = (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc));
+        let var_type = if Token::consume(token, TokenKind::LBracket) {
+            let array_size = parse_array_size(token, input).unwrap();
+            let base_type = create_base_type(ptr_count);
+            Type::new_array(base_type, array_size)
+        } else {
+            create_base_type(ptr_count)
+        };
 
         scope.add_variable(var_name, var_type);
         Token::expect(token, TokenKind::Semicolon, input);
@@ -364,7 +435,10 @@ fn assign(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope
     let mut node = equality(token, input, scope);
 
     if Token::consume(token, TokenKind::Assign) {
-        let rhs = assign(token, input, scope);
+        let mut rhs = assign(token, input, scope);
+
+        rhs.decay_array_type();
+
         node = ASTNode::binary(ASTNodeKind::Assign, node, rhs);
     }
 
@@ -381,16 +455,31 @@ fn equality(
     loop {
         if Token::consume(token, TokenKind::Equal) {
             let rhs = relational(token, input, scope);
-            node = ASTNode::binary(ASTNodeKind::Equal, node, rhs);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Equal, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::NotEqual) {
             let rhs = relational(token, input, scope);
-            node = ASTNode::binary(ASTNodeKind::NotEqual, node, rhs);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
+            node = ASTNode::binary(ASTNodeKind::NotEqual, lhs_node, rhs_node);
         } else {
             break;
         }
     }
 
     node
+}
+
+fn convert_arrays_to_pointers(
+    lhs: Box<ASTNode>,
+    rhs: Box<ASTNode>,
+) -> (Box<ASTNode>, Box<ASTNode>) {
+    let mut lhs_node = lhs;
+    lhs_node.decay_array_type();
+
+    let mut rhs_node = rhs;
+    rhs_node.decay_array_type();
+
+    (lhs_node, rhs_node)
 }
 
 fn relational(
@@ -403,16 +492,20 @@ fn relational(
     loop {
         if Token::consume(token, TokenKind::Less) {
             let rhs = add(token, input, scope);
-            node = ASTNode::binary(ASTNodeKind::Less, node, rhs);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Less, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::LessEqual) {
             let rhs = add(token, input, scope);
-            node = ASTNode::binary(ASTNodeKind::LessEqual, node, rhs);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
+            node = ASTNode::binary(ASTNodeKind::LessEqual, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::Greater) {
             let rhs = add(token, input, scope);
-            node = ASTNode::binary(ASTNodeKind::Greater, node, rhs);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
+            node = ASTNode::binary(ASTNodeKind::Greater, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::GreaterEqual) {
             let rhs = add(token, input, scope);
-            node = ASTNode::binary(ASTNodeKind::GreaterEqual, node, rhs);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
+            node = ASTNode::binary(ASTNodeKind::GreaterEqual, lhs_node, rhs_node);
         } else {
             break;
         }
@@ -428,17 +521,29 @@ fn add(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
         if Token::consume(token, TokenKind::Plus) {
             let rhs = mul(token, input, scope);
 
-            let lhs_is_ptr = node.node_type.as_ref().map_or(false, |t| t.is_pointer());
-            let rhs_is_ptr = rhs.node_type.as_ref().map_or(false, |t| t.is_pointer());
+            let mut lhs_node = node;
+            lhs_node.decay_array_type();
 
-            let (op_kind, lhs_node, rhs_node) = match (lhs_is_ptr, rhs_is_ptr) {
-                (true, false) => (ASTNodeKind::PtrAdd, node, rhs), // p + n
-                (false, true) => (ASTNodeKind::PtrAdd, rhs, node), // n + p -> p + n
-                _ => (ASTNodeKind::Add, node, rhs),                // n + n
+            let mut rhs_node = rhs;
+            rhs_node.decay_array_type();
+
+            let lhs_is_ptr = lhs_node
+                .node_type
+                .as_ref()
+                .map_or(false, |t| t.is_pointer());
+            let rhs_is_ptr = rhs_node
+                .node_type
+                .as_ref()
+                .map_or(false, |t| t.is_pointer());
+
+            let (op_kind, final_lhs, final_rhs) = match (lhs_is_ptr, rhs_is_ptr) {
+                (true, false) => (ASTNodeKind::PtrAdd, lhs_node, rhs_node), // p + n
+                (false, true) => (ASTNodeKind::PtrAdd, rhs_node, lhs_node), // n + p -> p + n
+                _ => (ASTNodeKind::Add, lhs_node, rhs_node),                // n + n
             };
 
             let result_type = if matches!(op_kind, ASTNodeKind::PtrAdd) {
-                lhs_node.node_type.clone()
+                final_lhs.node_type.clone()
             } else {
                 // TODO: デフォルトintを直す
                 Some(Type::new_int())
@@ -446,25 +551,34 @@ fn add(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
 
             node = Box::new(ASTNode::new_with_type(
                 op_kind,
-                Some(lhs_node),
-                Some(rhs_node),
+                Some(final_lhs),
+                Some(final_rhs),
                 result_type,
             ));
         } else if Token::consume(token, TokenKind::Minus) {
             let rhs = mul(token, input, scope);
 
-            let lhs_is_ptr = node.node_type.as_ref().map_or(false, |t| t.is_pointer());
+            let mut lhs_node = node;
+            lhs_node.decay_array_type();
+
+            let mut rhs_node = rhs;
+            rhs_node.decay_array_type();
+
+            let lhs_is_ptr = lhs_node
+                .node_type
+                .as_ref()
+                .map_or(false, |t| t.is_pointer());
 
             let (op_kind, result_type) = if lhs_is_ptr {
-                (ASTNodeKind::PtrSub, node.node_type.clone())
+                (ASTNodeKind::PtrSub, lhs_node.node_type.clone())
             } else {
                 (ASTNodeKind::Sub, Some(Type::new_int()))
             };
 
             node = Box::new(ASTNode::new_with_type(
                 op_kind,
-                Some(node),
-                Some(rhs),
+                Some(lhs_node),
+                Some(rhs_node),
                 result_type,
             ));
         } else {
@@ -481,18 +595,20 @@ fn mul(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
     loop {
         if Token::consume(token, TokenKind::Star) {
             let rhs = unary(token, input, scope);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = Box::new(ASTNode::new_with_type(
                 ASTNodeKind::Mul,
-                Some(node),
-                Some(rhs),
+                Some(lhs_node),
+                Some(rhs_node),
                 Some(Type::new_int()),
             ));
         } else if Token::consume(token, TokenKind::Slash) {
             let rhs = unary(token, input, scope);
+            let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = Box::new(ASTNode::new_with_type(
                 ASTNodeKind::Div,
-                Some(node),
-                Some(rhs),
+                Some(lhs_node),
+                Some(rhs_node),
                 Some(Type::new_int()),
             ));
         } else {
@@ -512,7 +628,9 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
         zero_node.node_type = Some(Type::new_int());
         return ASTNode::binary(ASTNodeKind::Sub, zero_node, node);
     } else if Token::consume(token, TokenKind::Star) {
-        let node = unary(token, input, scope);
+        let mut node = unary(token, input, scope);
+        node.decay_array_type();
+
         let mut deref_node = ASTNode::unary(ASTNodeKind::Deref, node);
 
         if let Some(ref node_type) = deref_node.lhs.as_ref().unwrap().node_type {
@@ -590,12 +708,50 @@ fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
 
                 match scope.get_variable(&var_name) {
                     Some((offset, var_type)) => {
-                        return Box::new(ASTNode::new_with_type(
+                        let var_type = var_type.clone();
+
+                        let mut variable_node = Box::new(ASTNode::new_with_type(
                             ASTNodeKind::LocalVariable(*offset),
                             None,
                             None,
                             Some(var_type.clone()),
                         ));
+
+                        if Token::consume(token, TokenKind::LBracket) {
+                            let index_expr = expr(token, input, scope);
+                            Token::expect(token, TokenKind::RBracket, input);
+
+                            let (add_op_kind, add_result_type) = match &var_type.kind {
+                                TypeKind::Ptr => (ASTNodeKind::PtrAdd, Some(var_type.clone())),
+                                TypeKind::Array => match &var_type.ptr_to {
+                                    Some(element_type) => (
+                                        ASTNodeKind::PtrAdd,
+                                        Some(Type::new_ptr((**element_type).clone())),
+                                    ),
+                                    None => panic!("Invalid array type"),
+                                },
+                                _ => panic!("配列またはポインタである必要があります"),
+                            };
+
+                            let add_node = Box::new(ASTNode::new_with_type(
+                                add_op_kind,
+                                Some(variable_node),
+                                Some(index_expr),
+                                add_result_type.clone(),
+                            ));
+
+                            let deref_result_type =
+                                add_result_type.and_then(|ptr_type| ptr_type.ptr_to.map(|t| *t));
+
+                            variable_node = Box::new(ASTNode::new_with_type(
+                                ASTNodeKind::Deref,
+                                Some(add_node),
+                                None,
+                                deref_result_type,
+                            ));
+                        }
+
+                        return variable_node;
                     }
                     None => panic!("未定義の変数: {}", var_name),
                 }
