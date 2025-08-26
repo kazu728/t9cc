@@ -150,7 +150,7 @@ pub enum ASTNodeKind {
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ASTNode {
     pub kind: ASTNodeKind,
     pub lhs: MaybeASTNode,
@@ -621,9 +621,9 @@ fn mul(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
 
 fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::Plus) {
-        return primary(token, input, scope);
+        return postfix(token, input, scope);
     } else if Token::consume(token, TokenKind::Minus) {
-        let node = primary(token, input, scope);
+        let node = postfix(token, input, scope);
         let mut zero_node = ASTNode::leaf(ASTNodeKind::Num(0));
         zero_node.node_type = Some(Type::new_int());
         return ASTNode::binary(ASTNodeKind::Sub, zero_node, node);
@@ -658,7 +658,53 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
             Some(Type::new_int()),
         ));
     }
-    primary(token, input, scope)
+    postfix(token, input, scope)
+}
+
+fn postfix(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
+    let mut base = primary(token, input, scope);
+
+    while Token::consume(token, TokenKind::LBracket) {
+        let mut index = expr(token, input, scope);
+        Token::expect(token, TokenKind::RBracket, input);
+
+        base.decay_array_type();
+        index.decay_array_type();
+
+        let base_is_ptr = base.node_type.as_ref().map_or(false, |t| t.is_pointer());
+        let index_is_ptr = index.node_type.as_ref().map_or(false, |t| t.is_pointer());
+
+        let (ptr_operand, int_operand, ptr_type) = match (base_is_ptr, index_is_ptr) {
+            (true, false) => {
+                let ptr_type = base.node_type.clone();
+                (base, index, ptr_type)
+            }
+            (false, true) => {
+                let ptr_type = index.node_type.clone();
+                (index, base, ptr_type)
+            }
+            (false, false) => panic!("配列またはポインタである必要があります"),
+            (true, true) => panic!("両方がポインタの場合は未サポート"),
+        };
+
+        let add_node = Box::new(ASTNode::new_with_type(
+            ASTNodeKind::PtrAdd,
+            Some(ptr_operand),
+            Some(int_operand),
+            ptr_type.clone(),
+        ));
+
+        let deref_result_type = ptr_type.and_then(|t| t.ptr_to.map(|boxed_t| *boxed_t));
+
+        base = Box::new(ASTNode::new_with_type(
+            ASTNodeKind::Deref,
+            Some(add_node),
+            None,
+            deref_result_type,
+        ));
+    }
+
+    base
 }
 
 fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
@@ -708,50 +754,12 @@ fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
 
                 match scope.get_variable(&var_name) {
                     Some((offset, var_type)) => {
-                        let var_type = var_type.clone();
-
-                        let mut variable_node = Box::new(ASTNode::new_with_type(
+                        return Box::new(ASTNode::new_with_type(
                             ASTNodeKind::LocalVariable(*offset),
                             None,
                             None,
                             Some(var_type.clone()),
                         ));
-
-                        if Token::consume(token, TokenKind::LBracket) {
-                            let index_expr = expr(token, input, scope);
-                            Token::expect(token, TokenKind::RBracket, input);
-
-                            let (add_op_kind, add_result_type) = match &var_type.kind {
-                                TypeKind::Ptr => (ASTNodeKind::PtrAdd, Some(var_type.clone())),
-                                TypeKind::Array => match &var_type.ptr_to {
-                                    Some(element_type) => (
-                                        ASTNodeKind::PtrAdd,
-                                        Some(Type::new_ptr((**element_type).clone())),
-                                    ),
-                                    None => panic!("Invalid array type"),
-                                },
-                                _ => panic!("配列またはポインタである必要があります"),
-                            };
-
-                            let add_node = Box::new(ASTNode::new_with_type(
-                                add_op_kind,
-                                Some(variable_node),
-                                Some(index_expr),
-                                add_result_type.clone(),
-                            ));
-
-                            let deref_result_type =
-                                add_result_type.and_then(|ptr_type| ptr_type.ptr_to.map(|t| *t));
-
-                            variable_node = Box::new(ASTNode::new_with_type(
-                                ASTNodeKind::Deref,
-                                Some(add_node),
-                                None,
-                                deref_result_type,
-                            ));
-                        }
-
-                        return variable_node;
                     }
                     None => panic!("未定義の変数: {}", var_name),
                 }
