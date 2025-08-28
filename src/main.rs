@@ -1,5 +1,5 @@
 use std::io::Write;
-use t9cc::asm_generator::gen_asm;
+use t9cc::asm_generator::gen_program_asm;
 use t9cc::parser::program;
 use t9cc::token::Tokenizer;
 
@@ -12,16 +12,14 @@ fn main() {
     let input = args[1].as_str();
     let token = Tokenizer::new(input).tokenize();
 
-    let functions = program(&mut Some(Box::new(token)), input);
+    let program_ast = program(&mut Some(Box::new(token)), input);
 
     let mut output = String::new();
 
     output.push_str(".intel_syntax noprefix\n");
-    output.push_str(".global main\n");
+    output.push_str(".global main\n\n");
 
-    for function in functions {
-        gen_asm(&function, &mut output);
-    }
+    gen_program_asm(&program_ast, &mut output);
 
     write_asm("build/tmp.s", output).unwrap();
 }

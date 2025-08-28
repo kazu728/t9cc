@@ -1,4 +1,4 @@
-use crate::parser::{ASTNode, ASTNodeKind, TypeKind};
+use crate::parser::{ASTNode, ASTNodeKind, Program, Type, TypeKind};
 
 const REGISTERS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 const MAX_REGISTER_ARGS: usize = 6;
@@ -14,7 +14,28 @@ fn get_label_number() -> usize {
     }
 }
 
-pub fn gen_asm(ast_node: &ASTNode, output: &mut String) {
+pub fn gen_program_asm(program: &Program, output: &mut String) {
+    if !program.global_vars.is_empty() {
+        output.push_str(".data\n");
+        for (name, var_type) in &program.global_vars {
+            gen_global_var(name, var_type, output);
+        }
+        output.push('\n');
+    }
+
+    output.push_str(".text\n");
+    for function in &program.functions {
+        gen_function_asm(function, output);
+    }
+}
+
+fn gen_global_var(name: &str, var_type: &Type, output: &mut String) {
+    output.push_str(&format!("{}:\n", name));
+    let size = var_type.sizeof();
+    output.push_str(&format!("  .zero {}\n", size));
+}
+
+pub fn gen_function_asm(ast_node: &ASTNode, output: &mut String) {
     match ast_node.kind {
         ASTNodeKind::FunctionDef => {
             let (func_name, params) = match &ast_node.lhs {
@@ -85,27 +106,25 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
         }
         ASTNodeKind::LocalVariable(_) => {
             gen_local_variable(ast_node, output);
-            if let Some(node_type) = &ast_node.node_type {
-                match node_type.kind {
-                    TypeKind::Array => {
-                        // 配列の場合はアドレスをそのまま使用（decay to pointer）
-                        // gen_local_variableがアドレスをプッシュ済みなので何もしない
-                    }
-                    _ => {
-                        output.push_str("  pop rax\n");
-                        output.push_str("  mov rax, [rax]\n");
-                        output.push_str("  push rax\n");
-                    }
-                }
-            } else {
-                output.push_str("  pop rax\n");
-                output.push_str("  mov rax, [rax]\n");
-                output.push_str("  push rax\n");
-            }
+            output.push_str("  pop rax\n");
+            output.push_str("  mov rax, [rax]\n");
+            output.push_str("  push rax\n");
+        }
+
+        ASTNodeKind::GlobalVariable(ref name) => {
+            gen_global_variable(name, ast_node, output);
+            output.push_str("  pop rax\n");
+            output.push_str("  mov rax, [rax]\n");
+            output.push_str("  push rax\n");
         }
         ASTNodeKind::Assign => {
             if let Some(lhs) = &ast_node.lhs {
-                gen_local_variable(lhs, output);
+                match lhs.kind {
+                    ASTNodeKind::LocalVariable(_) => gen_local_variable(lhs, output),
+                    ASTNodeKind::GlobalVariable(ref name) => gen_global_variable(name, lhs, output),
+                    ASTNodeKind::Deref => gen_local_variable(lhs, output),
+                    _ => panic!("Invalid left-hand side of assignment"),
+                }
             }
             if let Some(rhs) = &ast_node.rhs {
                 gen_stack_instruction_asm(rhs, output);
@@ -391,12 +410,20 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
     }
 }
 
+fn gen_global_variable(name: &str, _ast_node: &ASTNode, output: &mut String) {
+    output.push_str(&format!("  lea rax, [rip + {}]\n", name));
+    output.push_str("  push rax\n");
+}
+
 fn gen_local_variable(ast_node: &ASTNode, output: &mut String) {
     match ast_node.kind {
         ASTNodeKind::LocalVariable(offset) => {
             output.push_str("  mov rax, rbp\n");
             output.push_str(format!("  sub rax, {}\n", offset).as_str());
             output.push_str("  push rax\n");
+        }
+        ASTNodeKind::GlobalVariable(ref name) => {
+            gen_global_variable(name, ast_node, output);
         }
         ASTNodeKind::Deref => {
             if let Some(lhs) = &ast_node.lhs {

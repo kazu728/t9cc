@@ -73,7 +73,7 @@ fn run_test(test_case: &TestCase) -> TestResult {
     let helper_obj = "build/test_helper.o";
 
     let helper_compile = Command::new("orb")
-        .args(&[
+        .args([
             "-m",
             "ubuntu",
             "exec",
@@ -97,7 +97,7 @@ fn run_test(test_case: &TestCase) -> TestResult {
     }
 
     let output = match Command::new("cargo")
-        .args(&["run", "--bin", "t9cc", "--", &test_case.input])
+        .args(["run", "--bin", "t9cc", "--", &test_case.input])
         .output()
     {
         Ok(output) => output,
@@ -139,7 +139,7 @@ fn run_test(test_case: &TestCase) -> TestResult {
     }
 
     let compile_output = match Command::new("orb")
-        .args(&[
+        .args([
             "-m", "ubuntu", "exec", "gcc", "-o", &exe_file, &asm_file, helper_obj,
         ])
         .output()
@@ -172,7 +172,7 @@ fn run_test(test_case: &TestCase) -> TestResult {
     }
 
     let exe_output = match Command::new("orb")
-        .args(&["-m", "ubuntu", "exec", &exe_file])
+        .args(["-m", "ubuntu", "exec", &exe_file])
         .output()
     {
         Ok(output) => output,

@@ -123,7 +123,8 @@ pub enum ASTNodeKind {
     Less,
     LessEqual,
 
-    LocalVariable(u32), // ローカル変数のベースポインタからのオフセット,
+    LocalVariable(u32),     // ローカル変数のベースポインタからのオフセット,
+    GlobalVariable(String), // グローバル変数名
     Assign,
     Addr,
     Deref,
@@ -145,7 +146,9 @@ pub enum ASTNodeKind {
     FunctionDef,
     FunctionName(String),
     Parameter(String),
-    VarDecl, // 変数宣言
+    VarDecl,               // 変数宣言
+    GlobalVarDef(String),  // グローバル変数定義
+    StringLiteral(String), // 文字列リテラル
 }
 
 pub type MaybeASTNode = Option<Box<ASTNode>>;
@@ -200,6 +203,15 @@ impl ASTNode {
         ))
     }
 
+    pub fn new_global_var_with_type(name: String, var_type: Type) -> Box<ASTNode> {
+        Box::new(ASTNode::new_with_type(
+            ASTNodeKind::GlobalVariable(name),
+            None,
+            None,
+            Some(var_type),
+        ))
+    }
+
     pub fn new_binary_with_type(
         kind: ASTNodeKind,
         lhs: Box<ASTNode>,
@@ -244,7 +256,28 @@ impl ASTNode {
     }
 }
 
-// program    = function_def*
+#[derive(Debug, PartialEq, Eq)]
+pub struct Program {
+    pub functions: Vec<Box<ASTNode>>,
+    pub global_vars: HashMap<String, Type>,
+}
+
+impl Default for Program {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Program {
+    pub fn new() -> Self {
+        Program {
+            functions: Vec::new(),
+            global_vars: HashMap::new(),
+        }
+    }
+}
+
+// program    = (function_def | global_var_def)*
 // function_def = ident "(" params? ")" "{" stmt* "}"
 // params     = ident ("," ident)*
 
@@ -264,17 +297,53 @@ impl ASTNode {
 // unary      = ("+" | "-")? primary
 // primary    = num | ident ("(" (expr ("," expr)*)? ")")? | "(" expr ")"
 
-pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Vec<Box<ASTNode>> {
-    let mut functions: Vec<Box<ASTNode>> = vec![];
+pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Program {
+    let mut program = Program::new();
 
     while token.is_some() {
-        functions.push(function_def(token, input));
+        if is_function_definition(token) {
+            program
+                .functions
+                .push(function_def(token, input, &mut program.global_vars));
+        } else {
+            global_var_def(token, input, &mut program.global_vars);
+        }
     }
 
-    functions
+    program
 }
 
-fn function_def(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
+// トークンを先読みして関数定義か変数定義かを判別する
+fn is_function_definition(token: &Option<Box<Token>>) -> bool {
+    if let Some(t) = token {
+        if matches!(t.kind, TokenKind::Int) {
+            let mut current = &t.next;
+
+            while let Some(t) = current {
+                if matches!(t.kind, TokenKind::Star) {
+                    current = &t.next;
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(t) = current {
+                if matches!(t.kind, TokenKind::Identifier(_)) {
+                    if let Some(next) = &t.next {
+                        return matches!(next.kind, TokenKind::LParen);
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn function_def(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    _global_vars: &mut HashMap<String, Type>,
+) -> Box<ASTNode> {
     Token::expect(token, TokenKind::Int, input);
     let function_name = Token::expect_identifier(token, input);
 
@@ -287,7 +356,7 @@ fn function_def(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
 
     let mut body_stmts = Vec::new();
     while !Token::consume(token, TokenKind::RBrace) {
-        body_stmts.push(stmt(token, input, &mut scope));
+        body_stmts.push(*stmt(token, input, &mut scope, _global_vars));
     }
 
     let body = build_block_ast(body_stmts);
@@ -304,11 +373,51 @@ fn function_def(token: &mut Option<Box<Token>>, input: &str) -> Box<ASTNode> {
     )
 }
 
-fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
+fn global_var_def(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    global_vars: &mut HashMap<String, Type>,
+) {
+    Token::expect(token, TokenKind::Int, input);
+
+    let ptr_count =
+        std::iter::from_fn(|| Token::consume(token, TokenKind::Star).then_some(())).count();
+
+    let var_name = Token::expect_identifier(token, input);
+
+    let var_type = if Token::consume(token, TokenKind::LBracket) {
+        let array_size = if let Some(t) = token.take() {
+            if let TokenKind::Number(size) = t.kind {
+                *token = t.next;
+                size as usize
+            } else {
+                panic!("配列サイズは数値である必要があります");
+            }
+        } else {
+            panic!("配列サイズが指定されていません");
+        };
+        Token::expect(token, TokenKind::RBracket, input);
+
+        let base_type = (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc));
+        Type::new_array(base_type, array_size)
+    } else {
+        (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc))
+    };
+
+    global_vars.insert(var_name, var_type);
+    Token::expect(token, TokenKind::Semicolon, input);
+}
+
+fn stmt(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::LBrace) {
         let mut stmts = vec![];
         while !Token::consume(token, TokenKind::RBrace) {
-            stmts.push(stmt(token, input, scope));
+            stmts.push(*stmt(token, input, scope, global_vars));
         }
 
         return build_block_ast(stmts);
@@ -353,11 +462,11 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
 
     if Token::consume(token, TokenKind::If) {
         Token::expect(token, TokenKind::LParen, input);
-        let cond_node = expr(token, input, scope);
+        let cond_node = expr(token, input, scope, global_vars);
         Token::expect(token, TokenKind::RParen, input);
-        let then_node = stmt(token, input, scope);
+        let then_node = stmt(token, input, scope, global_vars);
         let else_node = if Token::consume(token, TokenKind::Else) {
-            Some(stmt(token, input, scope))
+            Some(stmt(token, input, scope, global_vars))
         } else {
             None
         };
@@ -368,9 +477,9 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
 
     if Token::consume(token, TokenKind::While) {
         Token::expect(token, TokenKind::LParen, input);
-        let cond_node = expr(token, input, scope);
+        let cond_node = expr(token, input, scope, global_vars);
         Token::expect(token, TokenKind::RParen, input);
-        let body_node = stmt(token, input, scope);
+        let body_node = stmt(token, input, scope, global_vars);
         return ASTNode::new_boxed(ASTNodeKind::While, Some(cond_node), Some(body_node));
     }
 
@@ -378,7 +487,7 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
         Token::expect(token, TokenKind::LParen, input);
 
         let init_node = if !Token::consume(token, TokenKind::Semicolon) {
-            let init = expr(token, input, scope);
+            let init = expr(token, input, scope, global_vars);
             Token::expect(token, TokenKind::Semicolon, input);
             Some(init)
         } else {
@@ -386,7 +495,7 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
         };
 
         let cond_node = if !Token::consume(token, TokenKind::Semicolon) {
-            let cond = expr(token, input, scope);
+            let cond = expr(token, input, scope, global_vars);
             Token::expect(token, TokenKind::Semicolon, input);
             Some(cond)
         } else {
@@ -394,7 +503,7 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
         };
 
         let update_node = if !Token::consume(token, TokenKind::RParen) {
-            let update = expr(token, input, scope);
+            let update = expr(token, input, scope, global_vars);
             Token::expect(token, TokenKind::RParen, input);
             Some(update)
         } else {
@@ -411,31 +520,41 @@ fn stmt(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) 
             Some(ASTNode::new_boxed(
                 ASTNodeKind::ForUpdate,
                 update_node,
-                Some(stmt(token, input, scope)),
+                Some(stmt(token, input, scope, global_vars)),
             )),
         );
     }
 
     if Token::consume(token, TokenKind::Return) {
-        let expr_node = expr(token, input, scope);
+        let expr_node = expr(token, input, scope, global_vars);
         Token::expect(token, TokenKind::Semicolon, input);
         return ASTNode::unary(ASTNodeKind::Return, expr_node);
     }
 
-    let node = expr(token, input, scope);
+    let node = expr(token, input, scope, global_vars);
     Token::expect(token, TokenKind::Semicolon, input);
     node
 }
 
-fn expr(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
-    assign(token, input, scope)
+fn expr(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
+    assign(token, input, scope, global_vars)
 }
 
-fn assign(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
-    let mut node = equality(token, input, scope);
+fn assign(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
+    let mut node = equality(token, input, scope, global_vars);
 
     if Token::consume(token, TokenKind::Assign) {
-        let mut rhs = assign(token, input, scope);
+        let mut rhs = assign(token, input, scope, global_vars);
 
         rhs.decay_array_type();
 
@@ -449,16 +568,17 @@ fn equality(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
 ) -> Box<ASTNode> {
-    let mut node = relational(token, input, scope);
+    let mut node = relational(token, input, scope, global_vars);
 
     loop {
         if Token::consume(token, TokenKind::Equal) {
-            let rhs = relational(token, input, scope);
+            let rhs = relational(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = ASTNode::binary(ASTNodeKind::Equal, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::NotEqual) {
-            let rhs = relational(token, input, scope);
+            let rhs = relational(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = ASTNode::binary(ASTNodeKind::NotEqual, lhs_node, rhs_node);
         } else {
@@ -486,24 +606,25 @@ fn relational(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
 ) -> Box<ASTNode> {
-    let mut node = add(token, input, scope);
+    let mut node = add(token, input, scope, global_vars);
 
     loop {
         if Token::consume(token, TokenKind::Less) {
-            let rhs = add(token, input, scope);
+            let rhs = add(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = ASTNode::binary(ASTNodeKind::Less, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::LessEqual) {
-            let rhs = add(token, input, scope);
+            let rhs = add(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = ASTNode::binary(ASTNodeKind::LessEqual, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::Greater) {
-            let rhs = add(token, input, scope);
+            let rhs = add(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = ASTNode::binary(ASTNodeKind::Greater, lhs_node, rhs_node);
         } else if Token::consume(token, TokenKind::GreaterEqual) {
-            let rhs = add(token, input, scope);
+            let rhs = add(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = ASTNode::binary(ASTNodeKind::GreaterEqual, lhs_node, rhs_node);
         } else {
@@ -514,12 +635,17 @@ fn relational(
     node
 }
 
-fn add(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
-    let mut node = mul(token, input, scope);
+fn add(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
+    let mut node = mul(token, input, scope, global_vars);
 
     loop {
         if Token::consume(token, TokenKind::Plus) {
-            let rhs = mul(token, input, scope);
+            let rhs = mul(token, input, scope, global_vars);
 
             let mut lhs_node = node;
             lhs_node.decay_array_type();
@@ -556,7 +682,7 @@ fn add(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
                 result_type,
             ));
         } else if Token::consume(token, TokenKind::Minus) {
-            let rhs = mul(token, input, scope);
+            let rhs = mul(token, input, scope, global_vars);
 
             let mut lhs_node = node;
             lhs_node.decay_array_type();
@@ -589,12 +715,17 @@ fn add(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
     node
 }
 
-fn mul(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
-    let mut node = unary(token, input, scope);
+fn mul(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
+    let mut node = unary(token, input, scope, global_vars);
 
     loop {
         if Token::consume(token, TokenKind::Star) {
-            let rhs = unary(token, input, scope);
+            let rhs = unary(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = Box::new(ASTNode::new_with_type(
                 ASTNodeKind::Mul,
@@ -603,7 +734,7 @@ fn mul(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
                 Some(Type::new_int()),
             ));
         } else if Token::consume(token, TokenKind::Slash) {
-            let rhs = unary(token, input, scope);
+            let rhs = unary(token, input, scope, global_vars);
             let (lhs_node, rhs_node) = convert_arrays_to_pointers(node, rhs);
             node = Box::new(ASTNode::new_with_type(
                 ASTNodeKind::Div,
@@ -619,16 +750,21 @@ fn mul(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -
     node
 }
 
-fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
+fn unary(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::Plus) {
-        return postfix(token, input, scope);
+        return postfix(token, input, scope, global_vars);
     } else if Token::consume(token, TokenKind::Minus) {
-        let node = postfix(token, input, scope);
+        let node = postfix(token, input, scope, global_vars);
         let mut zero_node = ASTNode::leaf(ASTNodeKind::Num(0));
         zero_node.node_type = Some(Type::new_int());
         return ASTNode::binary(ASTNodeKind::Sub, zero_node, node);
     } else if Token::consume(token, TokenKind::Star) {
-        let mut node = unary(token, input, scope);
+        let mut node = unary(token, input, scope, global_vars);
         node.decay_array_type();
 
         let mut deref_node = ASTNode::unary(ASTNodeKind::Deref, node);
@@ -640,7 +776,7 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
         }
         return deref_node;
     } else if Token::consume(token, TokenKind::Ampersand) {
-        let node = unary(token, input, scope);
+        let node = unary(token, input, scope, global_vars);
         let mut addr_node = ASTNode::unary(ASTNodeKind::Addr, node);
 
         if let Some(ref node_type) = addr_node.lhs.as_ref().unwrap().node_type {
@@ -648,7 +784,7 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
         }
         return addr_node;
     } else if Token::consume(token, TokenKind::Sizeof) {
-        let node = unary(token, input, scope);
+        let node = unary(token, input, scope, global_vars);
         let size = node.node_type.as_ref().map_or(4, |t| t.sizeof());
 
         return Box::new(ASTNode::new_with_type(
@@ -658,14 +794,19 @@ fn unary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope)
             Some(Type::new_int()),
         ));
     }
-    postfix(token, input, scope)
+    postfix(token, input, scope, global_vars)
 }
 
-fn postfix(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
-    let mut base = primary(token, input, scope);
+fn postfix(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
+    let mut base = primary(token, input, scope, global_vars);
 
     while Token::consume(token, TokenKind::LBracket) {
-        let mut index = expr(token, input, scope);
+        let mut index = expr(token, input, scope, global_vars);
         Token::expect(token, TokenKind::RBracket, input);
 
         base.decay_array_type();
@@ -707,9 +848,14 @@ fn postfix(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
     base
 }
 
-fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScope) -> Box<ASTNode> {
+fn primary(
+    token: &mut Option<Box<Token>>,
+    input: &str,
+    scope: &mut FunctionScope,
+    global_vars: &HashMap<String, Type>,
+) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::LParen) {
-        let node = expr(token, input, scope);
+        let node = expr(token, input, scope, global_vars);
         Token::expect(token, TokenKind::RParen, input);
         return node;
     }
@@ -733,7 +879,7 @@ fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
                     let mut args = Vec::new();
                     if !Token::consume(token, TokenKind::RParen) {
                         loop {
-                            args.push(expr(token, input, scope));
+                            args.push(expr(token, input, scope, global_vars));
                             if !Token::consume(token, TokenKind::Comma) {
                                 break;
                             }
@@ -761,7 +907,13 @@ fn primary(token: &mut Option<Box<Token>>, input: &str, scope: &mut FunctionScop
                             Some(var_type.clone()),
                         ));
                     }
-                    None => panic!("未定義の変数: {}", var_name),
+                    None => match global_vars.get(&var_name) {
+                        Some(var_type) => {
+                            return ASTNode::new_global_var_with_type(var_name, var_type.clone());
+                        }
+
+                        None => panic!("未定義の変数: {}", var_name),
+                    },
                 }
             }
             _ => unreachable!("{:?}", t),
@@ -795,14 +947,14 @@ fn parse_parameters(
     params
 }
 
-fn build_block_ast(stmts: Vec<Box<ASTNode>>) -> Box<ASTNode> {
+fn build_block_ast(stmts: Vec<ASTNode>) -> Box<ASTNode> {
     if stmts.is_empty() {
         ASTNode::leaf(ASTNodeKind::Block)
     } else {
         let mut body = stmts.into_iter().collect::<Vec<_>>();
-        let mut result = body.pop().unwrap();
+        let mut result = Box::new(body.pop().unwrap());
         while let Some(stmt) = body.pop() {
-            result = ASTNode::new_boxed(ASTNodeKind::Block, Some(stmt), Some(result));
+            result = ASTNode::new_boxed(ASTNodeKind::Block, Some(Box::new(stmt)), Some(result));
         }
         result
     }
@@ -1043,7 +1195,8 @@ mod tests {
 
         for case in test_cases {
             let mut token = case.token;
-            let result = expr(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = expr(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected, "{}", case.name);
         }
     }
@@ -1078,7 +1231,8 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let result = unary(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = unary(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
     }
@@ -1125,7 +1279,8 @@ mod tests {
             let mut scope = FunctionScope::new();
             scope.add_variable("x".to_string(), Type::new_int());
             let mut token = case.token;
-            let result = primary(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = primary(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
     }
@@ -1151,7 +1306,8 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let result = mul(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = mul(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
     }
@@ -1176,7 +1332,8 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let result = relational(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = relational(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
     }
@@ -1201,7 +1358,8 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let result = equality(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = equality(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
     }
@@ -1227,7 +1385,8 @@ mod tests {
             let mut scope = FunctionScope::new();
             scope.add_variable("x".to_string(), Type::new_int());
             let mut token = case.token;
-            let result = assign(&mut token, case.raw_input, &mut scope);
+            let global_vars = HashMap::new();
+            let result = assign(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
     }

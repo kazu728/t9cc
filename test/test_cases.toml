@@ -352,3 +352,34 @@ name = "complex_reverse_array_index"
 input = "int main() { int a[3]; int i; a[0] = 100; a[1] = 200; a[2] = 300; i = 1; return i[a]; }"
 expected_output = 200
 description = "変数を使った逆順配列アクセス（i[a] は a[i] と同じ）"
+
+# グローバル変数のテスト
+[[test_cases]]
+name = "global_variable_basic"
+input = "int x; int main() { x = 10; return x; }"
+expected_output = 10
+description = "基本的なグローバル変数の使用"
+
+[[test_cases]]
+name = "global_variable_multiple"
+input = "int x; int y; int main() { x = 5; y = 3; return x + y; }"
+expected_output = 8
+description = "複数のグローバル変数"
+
+[[test_cases]]
+name = "local_shadows_global"
+input = "int x; int main() { int x; x = 20; return x; }"
+expected_output = 20
+description = "ローカル変数がグローバル変数をシャドウイング"
+
+[[test_cases]]
+name = "global_and_local_mixed"
+input = "int global_var; int main() { int local_var; global_var = 15; local_var = 5; return global_var + local_var; }"
+expected_output = 20
+description = "グローバル変数とローカル変数の混在"
+
+[[test_cases]]
+name = "global_pointer"
+input = "int *ptr; int main() { int x; x = 42; ptr = &x; return *ptr; }"
+expected_output = 42
+description = "グローバルポインタ変数"

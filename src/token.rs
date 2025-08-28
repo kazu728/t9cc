@@ -131,7 +131,7 @@ impl<'a> Token<'a> {
                 *token = tok.next.take();
                 return Some(result);
             }
-            error_at(&tok.input, input, error_msg);
+            error_at(tok.input, input, error_msg);
         } else {
             error_at("", input, "予期しないトークンの終端です");
         }
