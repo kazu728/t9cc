@@ -1,7 +1,8 @@
+use rayon::prelude::*;
 use serde::Deserialize;
 use std::fs;
-use std::io::Write;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Deserialize)]
 struct TestCase {
@@ -32,25 +33,39 @@ fn main() {
     let config: TestConfig =
         toml::from_str(&test_file).expect("test_cases.tomlのパースに失敗しました");
 
-    let mut results = Vec::new();
     let total_tests = config.test_cases.len();
+
+    println!("事前準備中...");
+    if let Err(e) = setup_test_environment() {
+        eprintln!("事前準備に失敗しました: {}", e);
+        std::process::exit(1);
+    }
 
     println!("e2e実行中...\n");
 
-    for test_case in config.test_cases {
-        print!("実行中: {} ... ", test_case.name);
-        std::io::stdout().flush().unwrap();
+    let completed = AtomicUsize::new(0);
+    let results: Vec<TestResult> = config
+        .test_cases
+        .par_iter()
+        .map(|test_case| {
+            let result = run_test(test_case);
+            let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let result = run_test(&test_case);
+            if result.passed {
+                println!(
+                    "[{:3}/{:3}] 実行中: {} ... ✓",
+                    count, total_tests, test_case.name
+                );
+            } else {
+                println!(
+                    "[{:3}/{:3}] 実行中: {} ... ✗",
+                    count, total_tests, test_case.name
+                );
+            }
 
-        if result.passed {
-            println!("✓");
-        } else {
-            println!("✗");
-        }
-
-        results.push(result);
-    }
+            result
+        })
+        .collect();
 
     print_results(&results);
 
@@ -67,9 +82,7 @@ fn main() {
     }
 }
 
-fn run_test(test_case: &TestCase) -> TestResult {
-    let asm_file = format!("build/{}.s", test_case.name);
-    let exe_file = format!("build/{}", test_case.name);
+fn setup_test_environment() -> Result<(), String> {
     let helper_obj = "build/test_helper.o";
 
     let helper_compile = Command::new("orb")
@@ -83,21 +96,47 @@ fn run_test(test_case: &TestCase) -> TestResult {
             helper_obj,
             "test/test_helper.c",
         ])
-        .output();
+        .output()
+        .map_err(|e| format!("test_helper.cのコンパイル失敗: {}", e))?;
 
-    if let Err(e) = helper_compile {
-        return TestResult {
-            name: test_case.name.clone(),
-            input: test_case.input.clone(),
-            expected: test_case.expected_output,
-            actual: None,
-            passed: false,
-            error: Some(format!("test_helper.cのコンパイル失敗: {}", e)),
-        };
+    if !helper_compile.status.success() {
+        return Err(format!(
+            "test_helper.cのコンパイル失敗: {}",
+            String::from_utf8_lossy(&helper_compile.stderr)
+        ));
     }
 
-    let output = match Command::new("cargo")
-        .args(["run", "--bin", "t9cc", "--", &test_case.input])
+    let build_output = Command::new("cargo")
+        .args(["build", "--release"])
+        .output()
+        .map_err(|e| format!("cargo buildに失敗しました: {}", e))?;
+
+    if !build_output.status.success() {
+        return Err(format!(
+            "cargo buildに失敗しました: {}",
+            String::from_utf8_lossy(&build_output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+fn run_test(test_case: &TestCase) -> TestResult {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let thread_id = std::thread::current().id();
+    let unique_id = format!("{}_{:?}", timestamp, thread_id);
+
+    let asm_file = format!("build/tmp_{}.s", unique_id);
+    let exe_file = format!("build/exe_{}", unique_id);
+    let helper_obj = "build/test_helper.o";
+
+    let output = match Command::new("target/release/t9cc")
+        .arg(&test_case.input)
         .output()
     {
         Ok(output) => output,
@@ -108,7 +147,7 @@ fn run_test(test_case: &TestCase) -> TestResult {
                 expected: test_case.expected_output,
                 actual: None,
                 passed: false,
-                error: Some(format!("cargo run失敗: {}", e)),
+                error: Some(format!("t9cc実行失敗: {}", e)),
             };
         }
     };
@@ -127,14 +166,14 @@ fn run_test(test_case: &TestCase) -> TestResult {
         };
     }
 
-    if let Err(e) = fs::rename("build/tmp.s", &asm_file) {
+    if let Err(e) = fs::write(&asm_file, &output.stdout) {
         return TestResult {
             name: test_case.name.clone(),
             input: test_case.input.clone(),
             expected: test_case.expected_output,
             actual: None,
             passed: false,
-            error: Some(format!("ファイル移動失敗: {}", e)),
+            error: Some(format!("アセンブリファイル書き込み失敗: {}", e)),
         };
     }
 
@@ -191,6 +230,9 @@ fn run_test(test_case: &TestCase) -> TestResult {
     let exit_code = exe_output.status.code().unwrap_or(-1);
     let passed = exit_code == test_case.expected_output;
 
+    let _ = fs::remove_file(&asm_file);
+    let _ = fs::remove_file(&exe_file);
+
     TestResult {
         name: test_case.name.clone(),
         input: test_case.input.clone(),
@@ -224,7 +266,7 @@ fn print_results(results: &[TestResult]) {
         println!(
             "│ {:<23} │ {:<33} │ {:>8} │ {:>8} │ {:^6} │",
             truncate(&result.name, 23),
-            truncate(&result.input, 33),
+            format_for_table(&result.input, 33),
             result.expected,
             actual_str,
             status
@@ -236,6 +278,21 @@ fn print_results(results: &[TestResult]) {
     }
 
     println!("└─────────────────────────┴───────────────────────────────────┴──────────┴──────────┴────────┘");
+}
+
+fn format_for_table(s: &str, max_len: usize) -> String {
+    // Replace newlines and normalize whitespace for table display
+    let normalized = s
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ");
+    
+    if normalized.len() <= max_len {
+        normalized
+    } else {
+        format!("{}...", &normalized[..max_len - 3])
+    }
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
