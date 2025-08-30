@@ -28,6 +28,7 @@ pub enum TokenKind<'a> {
 
     Number(i32),                   // 整数トークン
     CharLiteral(char),             // 文字リテラル
+    StringLiteral(String),         // 文字列リテラル
     Identifier(LocalVariable<'a>), // 識別子
 
     Int,    // int型宣言
@@ -199,6 +200,7 @@ impl<'a> Tokenizer<'a> {
                 '0'..='9' => self.parse_number(i),
                 'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(i),
                 '\'' => self.parse_char_literal(i),
+                '"' => self.parse_string_literal(i),
                 '+' => self.parse_single_char_op(i, TokenKind::Plus),
                 '-' => self.parse_single_char_op(i, TokenKind::Minus),
                 '*' => self.parse_single_char_op(i, TokenKind::Star),
@@ -350,6 +352,32 @@ impl<'a> Tokenizer<'a> {
             error_at(&self.input[i..], self.input, "不正な文字リテラル");
             None
         }
+    }
+
+    fn parse_string_literal(&mut self, i: usize) -> MaybeToken<'a> {
+        self.chars.next();
+
+        let mut string_content = String::new();
+
+        while let Some((pos, c)) = self.chars.peek().copied() {
+            if c == '"' {
+                self.chars.next();
+                return Token::new_maybe_token(
+                    TokenKind::StringLiteral(string_content),
+                    &self.input[i..pos + 1],
+                    None,
+                );
+            }
+            self.chars.next();
+            string_content.push(c);
+        }
+
+        error_at(
+            &self.input[i..],
+            self.input,
+            "文字列リテラルの終端がありません",
+        );
+        None
     }
 }
 

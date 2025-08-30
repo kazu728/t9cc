@@ -15,8 +15,14 @@ fn get_label_number() -> usize {
 }
 
 pub fn gen_program_asm(program: &Program, output: &mut String) {
-    if !program.global_vars.is_empty() {
+    if !program.global_vars.is_empty() || !program.string_literals.is_empty() {
         output.push_str(".data\n");
+
+        for (i, string_literal) in program.string_literals.iter().enumerate() {
+            output.push_str(&format!(".LC{}:\n", i));
+            output.push_str(&format!("  .string \"{}\"\n", string_literal));
+        }
+
         for (name, var_type) in &program.global_vars {
             gen_global_var(name, var_type, output);
         }
@@ -287,6 +293,9 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
             output.push_str("  and rsp, -16\n");
             output.push_str("  push rax\n");
 
+            // 可変長引数関数用にALに浮動小数点引数の数を設定（我々の場合は常に0）
+            output.push_str("  mov al, 0\n");
+
             let func_name = if let Some(func_node) = &ast_node.lhs {
                 match &func_node.kind {
                     ASTNodeKind::FunctionName(name) => name.as_str(),
@@ -424,6 +433,10 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
                 _ => output.push_str("  mov rax, [rax]\n"),
             }
 
+            output.push_str("  push rax\n");
+        }
+        ASTNodeKind::StringLiteral(string_id) => {
+            output.push_str(&format!("  lea rax, [rip + .LC{}]\n", string_id));
             output.push_str("  push rax\n");
         }
         ASTNodeKind::VarDecl => {
@@ -659,7 +672,7 @@ mod tests {
             },
             TestCase {
                 name: "ローカル変数",
-                node: ASTNode::new(ASTNodeKind::LocalVariable(8), None, None),
+                node: ASTNode::new_with_type(ASTNodeKind::LocalVariable(8), None, None, Some(Type::new_int())),
                 expected: "  mov rax, rbp
   sub rax, 8
   push rax
@@ -673,10 +686,11 @@ mod tests {
                 name: "ローカル変数の代入",
                 node: ASTNode::new(
                     ASTNodeKind::Assign,
-                    Some(Box::new(ASTNode::new(
+                    Some(Box::new(ASTNode::new_with_type(
                         ASTNodeKind::LocalVariable(8),
                         None,
                         None,
+                        Some(Type::new_int()),
                     ))),
                     Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
                 ),
@@ -838,19 +852,21 @@ mod tests {
                         ASTNodeKind::ForInit,
                         Some(Box::new(ASTNode::new(
                             ASTNodeKind::Assign,
-                            Some(Box::new(ASTNode::new(
+                            Some(Box::new(ASTNode::new_with_type(
                                 ASTNodeKind::LocalVariable(8),
                                 None,
                                 None,
+                                Some(Type::new_int()),
                             ))),
                             Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
                         ))),
                         Some(Box::new(ASTNode::new(
                             ASTNodeKind::Less,
-                            Some(Box::new(ASTNode::new(
+                            Some(Box::new(ASTNode::new_with_type(
                                 ASTNodeKind::LocalVariable(8),
                                 None,
                                 None,
+                                Some(Type::new_int()),
                             ))),
                             Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
                         ))),
@@ -859,17 +875,19 @@ mod tests {
                         ASTNodeKind::ForUpdate,
                         Some(Box::new(ASTNode::new(
                             ASTNodeKind::Assign,
-                            Some(Box::new(ASTNode::new(
+                            Some(Box::new(ASTNode::new_with_type(
                                 ASTNodeKind::LocalVariable(8),
                                 None,
                                 None,
+                                Some(Type::new_int()),
                             ))),
                             Some(Box::new(ASTNode::new(
                                 ASTNodeKind::Add,
-                                Some(Box::new(ASTNode::new(
+                                Some(Box::new(ASTNode::new_with_type(
                                     ASTNodeKind::LocalVariable(8),
                                     None,
                                     None,
+                                    Some(Type::new_int()),
                                 ))),
                                 Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
                             ))),

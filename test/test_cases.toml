@@ -390,3 +390,28 @@ name = "global_pointer"
 input = "int *ptr; int main() { int x; x = 42; ptr = &x; return *ptr; }"
 expected_output = 42
 description = "グローバルポインタ変数"
+
+# 文字列リテラルのテスト
+[[test_cases]]
+name = "string_literal_basic"
+input = "int main() { char *s; s = \"hello\"; return 0; }"
+expected_output = 0
+description = "基本的な文字列リテラルの代入"
+
+[[test_cases]]
+name = "string_literal_multiple"
+input = """int main() { char *s1; char *s2; s1 = "hello"; s2 = "world"; return 0; }"""
+expected_output = 0
+description = "複数の文字列リテラル"
+
+[[test_cases]]
+name = "string_literal_access"
+input = """int main() { char *s; s = "hello"; return s[0]; }"""
+expected_output = 104
+description = "文字列リテラルの文字アクセス（'h'のASCII値104）"
+
+[[test_cases]]
+name = "string_literal_comparison"
+input = """int main() { char *s1; char *s2; s1 = "test"; s2 = "test"; return s1 == s2; }"""
+expected_output = 1
+description = "同じ文字列リテラルのアドレス比較（最適化で同じアドレスになることを期待）"
