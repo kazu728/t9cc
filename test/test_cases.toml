@@ -232,13 +232,13 @@ description = "再帰関数（階乗）"
 # ポインタ演算
 [[test_cases]]
 name = "pointer_basic"
-input = "int main() { int x; int y; x = 3; y = &x; return *y; }"
+input = "int main() { int x; int *y; x = 3; y = &x; return *y; }"
 expected_output = 3
 description = "基本的なポインタ操作（アドレス取得と参照）"
 
 [[test_cases]]
 name = "pointer_indirect_access"
-input = "int main() { int x; int y; int z; x = 3; y = 5; z = &y + 2; return *z; }"
+input = "int main() { int x; int y; int *z; x = 3; y = 5; z = &y + 2; return *z; }"
 expected_output = 3
 description = "ポインタによる間接アクセス（スタック上の変数）"
 
@@ -352,6 +352,13 @@ name = "complex_reverse_array_index"
 input = "int main() { int a[3]; int i; a[0] = 100; a[1] = 200; a[2] = 300; i = 1; return i[a]; }"
 expected_output = 200
 description = "変数を使った逆順配列アクセス（i[a] は a[i] と同じ）"
+
+# char型のテスト
+[[test_cases]]
+name = "char_array_basic"
+input = "int main() { char x[3]; x[0] = -1; x[1] = 2; int y; y = 4; return x[0] + y; }"
+expected_output = 3
+description = "char型配列の基本操作"
 
 # グローバル変数のテスト
 [[test_cases]]

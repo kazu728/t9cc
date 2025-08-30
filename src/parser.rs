@@ -1,10 +1,11 @@
 use super::token::{Token, TokenKind};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::iter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind {
     Int,
+    Char,
     Ptr,
     Array,
 }
@@ -20,6 +21,14 @@ impl Type {
     pub fn new_int() -> Self {
         Type {
             kind: TypeKind::Int,
+            ptr_to: None,
+            array_size: None,
+        }
+    }
+
+    pub fn new_char() -> Self {
+        Type {
+            kind: TypeKind::Char,
             ptr_to: None,
             array_size: None,
         }
@@ -65,6 +74,7 @@ impl Type {
     pub fn sizeof(&self) -> i32 {
         match self.kind {
             TypeKind::Int => 4,
+            TypeKind::Char => 1,
             TypeKind::Ptr => 8,
             TypeKind::Array => {
                 if let (Some(element_type), Some(array_size)) = (&self.ptr_to, self.array_size) {
@@ -78,14 +88,14 @@ impl Type {
 }
 
 struct FunctionScope {
-    variables: HashMap<String, (u32, Type)>,
+    variables: BTreeMap<String, (u32, Type)>,
     next_offset: u32,
 }
 
 impl FunctionScope {
     fn new() -> Self {
         FunctionScope {
-            variables: HashMap::new(),
+            variables: BTreeMap::new(),
             next_offset: 8,
         }
     }
@@ -105,6 +115,34 @@ impl FunctionScope {
 
     fn get_variable(&self, name: &str) -> Option<&(u32, Type)> {
         self.variables.get(name)
+    }
+}
+
+fn consume_type(token: &mut Option<Box<Token>>) -> Type {
+    match token.as_ref().map(|t| &t.kind) {
+        Some(TokenKind::Int) => {
+            Token::consume(token, TokenKind::Int);
+            Type::new_int()
+        }
+        Some(TokenKind::Char) => {
+            Token::consume(token, TokenKind::Char);
+            Type::new_char()
+        }
+        _ => panic!("型宣言が必要です"),
+    }
+}
+
+fn parse_array_size(token: &mut Option<Box<Token>>, input: &str) -> usize {
+    if let Some(size_token) = token.take() {
+        if let TokenKind::Number(array_size) = size_token.kind {
+            *token = size_token.next;
+            Token::expect(token, TokenKind::RBracket, input);
+            array_size as usize
+        } else {
+            panic!("配列のサイズは数値である必要があります");
+        }
+    } else {
+        panic!("配列のサイズが指定されていません");
     }
 }
 
@@ -259,7 +297,7 @@ impl ASTNode {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Program {
     pub functions: Vec<Box<ASTNode>>,
-    pub global_vars: HashMap<String, Type>,
+    pub global_vars: BTreeMap<String, Type>,
 }
 
 impl Default for Program {
@@ -272,7 +310,7 @@ impl Program {
     pub fn new() -> Self {
         Program {
             functions: Vec::new(),
-            global_vars: HashMap::new(),
+            global_vars: BTreeMap::new(),
         }
     }
 }
@@ -316,7 +354,7 @@ pub fn program(token: &mut Option<Box<Token>>, input: &str) -> Program {
 // トークンを先読みして関数定義か変数定義かを判別する
 fn is_function_definition(token: &Option<Box<Token>>) -> bool {
     if let Some(t) = token {
-        if matches!(t.kind, TokenKind::Int) {
+        if matches!(t.kind, TokenKind::Int | TokenKind::Char) {
             let mut current = &t.next;
 
             while let Some(t) = current {
@@ -342,9 +380,9 @@ fn is_function_definition(token: &Option<Box<Token>>) -> bool {
 fn function_def(
     token: &mut Option<Box<Token>>,
     input: &str,
-    _global_vars: &mut HashMap<String, Type>,
+    _global_vars: &mut BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
-    Token::expect(token, TokenKind::Int, input);
+    let _return_type = consume_type(token);
     let function_name = Token::expect_identifier(token, input);
 
     Token::expect(token, TokenKind::LParen, input);
@@ -376,9 +414,9 @@ fn function_def(
 fn global_var_def(
     token: &mut Option<Box<Token>>,
     input: &str,
-    global_vars: &mut HashMap<String, Type>,
+    global_vars: &mut BTreeMap<String, Type>,
 ) {
-    Token::expect(token, TokenKind::Int, input);
+    let base_type = consume_type(token);
 
     let ptr_count =
         std::iter::from_fn(|| Token::consume(token, TokenKind::Star).then_some(())).count();
@@ -398,10 +436,10 @@ fn global_var_def(
         };
         Token::expect(token, TokenKind::RBracket, input);
 
-        let base_type = (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc));
-        Type::new_array(base_type, array_size)
+        let ptr_type = (0..ptr_count).fold(base_type.clone(), |acc, _| Type::new_ptr(acc));
+        Type::new_array(ptr_type, array_size)
     } else {
-        (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc))
+        (0..ptr_count).fold(base_type, |acc, _| Type::new_ptr(acc))
     };
 
     global_vars.insert(var_name, var_type);
@@ -412,7 +450,7 @@ fn stmt(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::LBrace) {
         let mut stmts = vec![];
@@ -423,36 +461,30 @@ fn stmt(
         return build_block_ast(stmts);
     }
 
-    if Token::consume(token, TokenKind::Int) {
-        fn create_base_type(ptr_count: usize) -> Type {
-            (0..ptr_count).fold(Type::new_int(), |acc, _| Type::new_ptr(acc))
+    let base_type = match token.as_ref().map(|t| &t.kind) {
+        Some(TokenKind::Int) => {
+            Token::consume(token, TokenKind::Int);
+            Some(Type::new_int())
         }
-
-        fn parse_array_size(token: &mut Option<Box<Token>>, input: &str) -> Option<usize> {
-            if let Some(size_token) = token.take() {
-                if let TokenKind::Number(array_size) = size_token.kind {
-                    *token = size_token.next;
-                    Token::expect(token, TokenKind::RBracket, input);
-                    Some(array_size as usize)
-                } else {
-                    panic!("配列のサイズは数値である必要があります");
-                }
-            } else {
-                panic!("配列のサイズが指定されていません");
-            }
+        Some(TokenKind::Char) => {
+            Token::consume(token, TokenKind::Char);
+            Some(Type::new_char())
         }
+        _ => None,
+    };
 
+    if let Some(base_type) = base_type {
         let ptr_count =
             iter::from_fn(|| Token::consume(token, TokenKind::Star).then_some(())).count();
 
         let var_name = Token::expect_identifier(token, input);
 
         let var_type = if Token::consume(token, TokenKind::LBracket) {
-            let array_size = parse_array_size(token, input).unwrap();
-            let base_type = create_base_type(ptr_count);
-            Type::new_array(base_type, array_size)
+            let array_size = parse_array_size(token, input);
+            let ptr_type = (0..ptr_count).fold(base_type, |acc, _| Type::new_ptr(acc));
+            Type::new_array(ptr_type, array_size)
         } else {
-            create_base_type(ptr_count)
+            (0..ptr_count).fold(base_type, |acc, _| Type::new_ptr(acc))
         };
 
         scope.add_variable(var_name, var_type);
@@ -540,7 +572,7 @@ fn expr(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     assign(token, input, scope, global_vars)
 }
@@ -549,7 +581,7 @@ fn assign(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     let mut node = equality(token, input, scope, global_vars);
 
@@ -568,7 +600,7 @@ fn equality(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     let mut node = relational(token, input, scope, global_vars);
 
@@ -606,7 +638,7 @@ fn relational(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     let mut node = add(token, input, scope, global_vars);
 
@@ -639,7 +671,7 @@ fn add(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     let mut node = mul(token, input, scope, global_vars);
 
@@ -719,7 +751,7 @@ fn mul(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     let mut node = unary(token, input, scope, global_vars);
 
@@ -754,7 +786,7 @@ fn unary(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::Plus) {
         return postfix(token, input, scope, global_vars);
@@ -801,7 +833,7 @@ fn postfix(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     let mut base = primary(token, input, scope, global_vars);
 
@@ -852,7 +884,7 @@ fn primary(
     token: &mut Option<Box<Token>>,
     input: &str,
     scope: &mut FunctionScope,
-    global_vars: &HashMap<String, Type>,
+    global_vars: &BTreeMap<String, Type>,
 ) -> Box<ASTNode> {
     if Token::consume(token, TokenKind::LParen) {
         let node = expr(token, input, scope, global_vars);
@@ -869,6 +901,15 @@ fn primary(
                     None,
                     None,
                     Some(Type::new_int()),
+                ));
+            }
+            TokenKind::CharLiteral(c) => {
+                *token = t.next;
+                return Box::new(ASTNode::new_with_type(
+                    ASTNodeKind::Num(c as i32),
+                    None,
+                    None,
+                    Some(Type::new_char()),
                 ));
             }
             TokenKind::Identifier(var) => {
@@ -932,9 +973,11 @@ fn parse_parameters(
 
     if !Token::consume(token, TokenKind::RParen) {
         loop {
-            Token::expect(token, TokenKind::Int, input);
+            let param_type = consume_type(token);
+
             let param_name = Token::expect_identifier(token, input);
-            scope.add_variable(param_name.clone(), Type::new_int());
+
+            scope.add_variable(param_name.clone(), param_type);
             params.push(param_name);
 
             if !Token::consume(token, TokenKind::Comma) {
@@ -1195,7 +1238,7 @@ mod tests {
 
         for case in test_cases {
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = expr(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected, "{}", case.name);
         }
@@ -1231,7 +1274,7 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = unary(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
@@ -1279,7 +1322,7 @@ mod tests {
             let mut scope = FunctionScope::new();
             scope.add_variable("x".to_string(), Type::new_int());
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = primary(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
@@ -1306,7 +1349,7 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = mul(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
@@ -1332,7 +1375,7 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = relational(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
@@ -1358,7 +1401,7 @@ mod tests {
         for case in test_cases {
             let mut scope = FunctionScope::new();
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = equality(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }
@@ -1385,7 +1428,7 @@ mod tests {
             let mut scope = FunctionScope::new();
             scope.add_variable("x".to_string(), Type::new_int());
             let mut token = case.token;
-            let global_vars = HashMap::new();
+            let global_vars = BTreeMap::new();
             let result = assign(&mut token, case.raw_input, &mut scope, &global_vars);
             assert_eq!(result, case.expected);
         }

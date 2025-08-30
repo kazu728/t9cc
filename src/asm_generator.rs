@@ -107,14 +107,24 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
         ASTNodeKind::LocalVariable(_) => {
             gen_local_variable(ast_node, output);
             output.push_str("  pop rax\n");
-            output.push_str("  mov rax, [rax]\n");
+
+            match ast_node.node_type.as_ref().unwrap().kind {
+                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
+                _ => output.push_str("  mov rax, [rax]\n"),
+            }
+
             output.push_str("  push rax\n");
         }
 
         ASTNodeKind::GlobalVariable(ref name) => {
             gen_global_variable(name, ast_node, output);
             output.push_str("  pop rax\n");
-            output.push_str("  mov rax, [rax]\n");
+
+            match ast_node.node_type.as_ref().unwrap().kind {
+                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
+                _ => output.push_str("  mov rax, [rax]\n"),
+            }
+
             output.push_str("  push rax\n");
         }
         ASTNodeKind::Assign => {
@@ -132,7 +142,14 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
 
             output.push_str("  pop rdi\n");
             output.push_str("  pop rax\n");
-            output.push_str("  mov [rax], rdi\n");
+
+            let lhs = ast_node.lhs.as_ref().unwrap();
+            match lhs.node_type.as_ref().unwrap().kind {
+                TypeKind::Char => output.push_str("  mov [rax], dil\n"),
+
+                _ => output.push_str("  mov [rax], rdi\n"),
+            }
+
             output.push_str("  push rdi\n");
         }
         ASTNodeKind::While => {
@@ -311,9 +328,11 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
                         if let Some(ref node_type) = lhs_node.node_type {
                             if let Some(ref ptr_to) = node_type.ptr_to {
                                 match ptr_to.kind {
+                                    TypeKind::Char => {}
                                     TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
                                     TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
                                     TypeKind::Array => match &ptr_to.kind {
+                                        TypeKind::Char => {}
                                         TypeKind::Int => output.push_str("  shl rdi, 2\n"),
                                         TypeKind::Ptr => output.push_str("  shl rdi, 3\n"),
                                         _ => output.push_str(&format!(
@@ -332,9 +351,11 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
                         if let Some(ref node_type) = lhs_node.node_type {
                             if let Some(ref ptr_to) = node_type.ptr_to {
                                 match ptr_to.kind {
+                                    TypeKind::Char => {}
                                     TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
                                     TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
                                     TypeKind::Array => match &ptr_to.kind {
+                                        TypeKind::Char => {}
                                         TypeKind::Int => output.push_str("  shl rdi, 2\n"),
                                         TypeKind::Ptr => output.push_str("  shl rdi, 3\n"),
                                         _ => output.push_str(&format!(
@@ -397,7 +418,12 @@ fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
                 gen_stack_instruction_asm(lhs, output);
             }
             output.push_str("  pop rax\n");
-            output.push_str("  mov rax, [rax]\n");
+
+            match ast_node.node_type.as_ref().unwrap().kind {
+                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
+                _ => output.push_str("  mov rax, [rax]\n"),
+            }
+
             output.push_str("  push rax\n");
         }
         ASTNodeKind::VarDecl => {

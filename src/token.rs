@@ -27,9 +27,11 @@ pub enum TokenKind<'a> {
     Comma,     // ,
 
     Number(i32),                   // 整数トークン
+    CharLiteral(char),             // 文字リテラル
     Identifier(LocalVariable<'a>), // 識別子
 
     Int,    // int型宣言
+    Char,   // char型宣言
     Return, // return文
     If,     // if文
     Else,   // else文
@@ -196,6 +198,7 @@ impl<'a> Tokenizer<'a> {
             let next_token = match c {
                 '0'..='9' => self.parse_number(i),
                 'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(i),
+                '\'' => self.parse_char_literal(i),
                 '+' => self.parse_single_char_op(i, TokenKind::Plus),
                 '-' => self.parse_single_char_op(i, TokenKind::Minus),
                 '*' => self.parse_single_char_op(i, TokenKind::Star),
@@ -276,6 +279,7 @@ impl<'a> Tokenizer<'a> {
 
         match name {
             "int" => Token::new_maybe_token(TokenKind::Int, name, None),
+            "char" => Token::new_maybe_token(TokenKind::Char, name, None),
             "return" => Token::new_maybe_token(TokenKind::Return, name, None),
             "if" => Token::new_maybe_token(TokenKind::If, name, None),
             "else" => Token::new_maybe_token(TokenKind::Else, name, None),
@@ -325,6 +329,26 @@ impl<'a> Tokenizer<'a> {
             Token::new_maybe_token(double_kind, &self.input[i..i + 2], None)
         } else {
             Token::new_maybe_token(single_kind, &self.input[i..i + 1], None)
+        }
+    }
+
+    fn parse_char_literal(&mut self, i: usize) -> MaybeToken<'a> {
+        self.chars.next();
+
+        if let Some((char_pos, c)) = self.chars.next() {
+            if let Some((end_pos, '\'')) = self.chars.next() {
+                Token::new_maybe_token(TokenKind::CharLiteral(c), &self.input[i..end_pos + 1], None)
+            } else {
+                error_at(
+                    &self.input[char_pos..],
+                    self.input,
+                    "文字リテラルの終端がありません",
+                );
+                None
+            }
+        } else {
+            error_at(&self.input[i..], self.input, "不正な文字リテラル");
+            None
         }
     }
 }
@@ -533,5 +557,34 @@ mod tests {
         let result = tokenizer.parse_multiple_char_op(0, TokenKind::Assign, TokenKind::Equal);
 
         assert_eq!(result, Token::new_maybe_token(TokenKind::Equal, "==", None));
+    }
+
+    #[test]
+    fn test_parse_char_literal() {
+        struct TestCase<'a> {
+            input: &'a str,
+            expected: Option<Box<Token<'a>>>,
+        }
+
+        let cases: Vec<TestCase> = vec![
+            TestCase {
+                input: "'a'",
+                expected: Token::new_maybe_token(TokenKind::CharLiteral('a'), "'a'", None),
+            },
+            TestCase {
+                input: "'1'",
+                expected: Token::new_maybe_token(TokenKind::CharLiteral('1'), "'1'", None),
+            },
+            TestCase {
+                input: "'Z'",
+                expected: Token::new_maybe_token(TokenKind::CharLiteral('Z'), "'Z'", None),
+            },
+        ];
+
+        for case in cases {
+            let mut tokenizer = Tokenizer::new(case.input);
+            let result = tokenizer.parse_char_literal(0);
+            assert_eq!(result, case.expected);
+        }
     }
 }
