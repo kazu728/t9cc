@@ -15,14 +15,17 @@ fn get_label_number() -> usize {
 }
 
 pub fn gen_program_asm(program: &Program, output: &mut String) {
-    if !program.global_vars.is_empty() || !program.string_literals.is_empty() {
-        output.push_str(".data\n");
-
+    if !program.string_literals.is_empty() {
+        output.push_str(".section .rodata\n");
         for (i, string_literal) in program.string_literals.iter().enumerate() {
             output.push_str(&format!(".LC{}:\n", i));
             output.push_str(&format!("  .string \"{}\"\n", string_literal));
         }
+        output.push('\n');
+    }
 
+    if !program.global_vars.is_empty() {
+        output.push_str(".bss\n");
         for (name, var_type) in &program.global_vars {
             gen_global_var(name, var_type, output);
         }
@@ -672,7 +675,12 @@ mod tests {
             },
             TestCase {
                 name: "ローカル変数",
-                node: ASTNode::new_with_type(ASTNodeKind::LocalVariable(8), None, None, Some(Type::new_int())),
+                node: ASTNode::new_with_type(
+                    ASTNodeKind::LocalVariable(8),
+                    None,
+                    None,
+                    Some(Type::new_int()),
+                ),
                 expected: "  mov rax, rbp
   sub rax, 8
   push rax
