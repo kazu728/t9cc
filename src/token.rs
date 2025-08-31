@@ -196,6 +196,12 @@ impl<'a> Tokenizer<'a> {
                 continue;
             }
 
+            if c == '/' {
+                if self.parse_comment(i).is_some() {
+                    continue;
+                }
+            }
+
             let next_token = match c {
                 '0'..='9' => self.parse_number(i),
                 'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(i),
@@ -378,6 +384,53 @@ impl<'a> Tokenizer<'a> {
             "文字列リテラルの終端がありません",
         );
         None
+    }
+
+    fn parse_comment(&mut self, i: usize) -> Option<()> {
+        if let Some((_, next_c)) = self.chars.clone().nth(1) {
+            match next_c {
+                '/' => {
+                    self.chars.next();
+                    self.chars.next();
+                    while let Some((_, ch)) = self.chars.peek() {
+                        if *ch == '\n' {
+                            break;
+                        }
+                        self.chars.next();
+                    }
+                    Some(())
+                }
+                '*' => {
+                    self.chars.next();
+                    self.chars.next();
+                    loop {
+                        match self.chars.peek() {
+                            Some((_, '*')) => {
+                                self.chars.next();
+                                if matches!(self.chars.peek(), Some((_, '/'))) {
+                                    self.chars.next();
+                                    break;
+                                }
+                            }
+                            Some(_) => {
+                                self.chars.next();
+                            }
+                            None => {
+                                error_at(
+                                    &self.input[i..],
+                                    self.input,
+                                    "コメントが閉じられていません",
+                                );
+                            }
+                        }
+                    }
+                    Some(())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -614,5 +667,68 @@ mod tests {
             let result = tokenizer.parse_char_literal(0);
             assert_eq!(result, case.expected);
         }
+    }
+
+    #[test]
+    fn test_tokenize_with_comments() {
+        struct TestCase<'a> {
+            input: &'a str,
+            expected_token_count: usize,
+            description: &'a str,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                input: "return 42; // line comment\n",
+                expected_token_count: 3, // return, 42, ;
+                description: "line comment should be skipped",
+            },
+            TestCase {
+                input: "return /* block comment */ 42;",
+                expected_token_count: 3, // return, 42, ;
+                description: "block comment should be skipped",
+            },
+            TestCase {
+                input: "42 // comment",
+                expected_token_count: 1, // 42
+                description: "line comment at end without newline",
+            },
+        ];
+
+        for test_case in test_cases {
+            let mut tokenizer = Tokenizer::new(test_case.input);
+            let token = tokenizer.tokenize();
+            let mut count = 0;
+            let mut current = Some(Box::new(token));
+
+            while let Some(t) = current {
+                current = t.next;
+                count += 1;
+            }
+
+            assert_eq!(
+                count, test_case.expected_token_count,
+                "Failed for test case: {}",
+                test_case.description
+            );
+        }
+    }
+
+    #[test]
+    fn test_line_comment_debug() {
+        let input = "int main() { return 42; // comment\n}";
+        let mut tokenizer = Tokenizer::new(input);
+        let token = tokenizer.tokenize();
+
+        let mut current = Some(Box::new(token));
+        let mut tokens = Vec::new();
+
+        while let Some(t) = current {
+            tokens.push(format!("{:?}", t.kind));
+            current = t.next;
+        }
+
+        println!("Tokens: {:?}", tokens);
+        // This should produce: [Int, Identifier("main"), LParen, RParen, LBrace, Return, Number(42), Semicolon, RBrace]
     }
 }

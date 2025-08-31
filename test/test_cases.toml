@@ -415,3 +415,52 @@ name = "string_literal_comparison"
 input = """int main() { char *s1; char *s2; s1 = "test"; s2 = "test"; return s1 == s2; }"""
 expected_output = 1
 description = "同じ文字列リテラルのアドレス比較（最適化で同じアドレスになることを期待）"
+
+# コメントのテスト
+[[test_cases]]
+name = "line_comment_simple"
+input = """int main() { return 42; // this is a comment
+}"""
+expected_output = 42
+description = "行コメントの基本テスト"
+
+[[test_cases]]
+name = "line_comment_with_expression"
+input = """int main() { return 10 + 5; // adding two numbers
+}"""
+expected_output = 15
+description = "式の後の行コメント"
+
+[[test_cases]]
+name = "block_comment_simple"
+input = "int main() { /* this is a block comment */ return 42; }"
+expected_output = 42
+description = "ブロックコメントの基本テスト"
+
+[[test_cases]]
+name = "block_comment_multiline"
+input = """int main() { 
+/* this is a 
+   multiline
+   block comment */
+return 42; 
+}"""
+expected_output = 42
+description = "複数行のブロックコメント"
+
+[[test_cases]]
+name = "mixed_comments"
+input = """int main() { 
+// line comment
+int x; /* block comment */ x = 10; 
+// another line comment
+return x; 
+}"""
+expected_output = 10
+description = "行コメントとブロックコメントの混在"
+
+[[test_cases]]
+name = "comment_in_expression"
+input = "int main() { return 10 /* comment */ + 5 /* another comment */; }"
+expected_output = 15
+description = "式中のブロックコメント"
