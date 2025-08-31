@@ -131,12 +131,25 @@ fn run_test(test_case: &TestCase) -> TestResult {
     let thread_id = std::thread::current().id();
     let unique_id = format!("{}_{:?}", timestamp, thread_id);
 
+    let source_file = format!("build/src_{}.c", unique_id);
     let asm_file = format!("build/tmp_{}.s", unique_id);
     let exe_file = format!("build/exe_{}", unique_id);
     let helper_obj = "build/test_helper.o";
 
+    // テスト入力を一時ファイルに書き込む
+    if let Err(e) = fs::write(&source_file, &test_case.input) {
+        return TestResult {
+            name: test_case.name.clone(),
+            input: test_case.input.clone(),
+            expected: test_case.expected_output,
+            actual: None,
+            passed: false,
+            error: Some(format!("ソースファイル書き込み失敗: {}", e)),
+        };
+    }
+
     let output = match Command::new("target/release/t9cc")
-        .arg(&test_case.input)
+        .arg(&source_file)
         .output()
     {
         Ok(output) => output,
@@ -230,6 +243,7 @@ fn run_test(test_case: &TestCase) -> TestResult {
     let exit_code = exe_output.status.code().unwrap_or(-1);
     let passed = exit_code == test_case.expected_output;
 
+    let _ = fs::remove_file(&source_file);
     let _ = fs::remove_file(&asm_file);
     let _ = fs::remove_file(&exe_file);
 
