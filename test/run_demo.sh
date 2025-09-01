@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# demo.cの実行専用スクリプト - 詳細な説明付き
+# test/demo.cの実行専用スクリプト - 詳細な説明付き
 
 set -e
 
@@ -9,15 +9,15 @@ echo "  t9ccコンパイラ デモンストレーション"
 echo "======================================================"
 echo
 echo "このスクリプトは以下の処理を実行します："
-echo "1. demo.cをt9ccでコンパイル"
+echo "1. test/demo.cをt9ccでコンパイル"
 echo "2. 生成されたアセンブリをgccでビルド"
 echo "3. orb上で実行してt9ccの機能をテスト"
 echo
 
 # demo.cの存在確認
-if [ ! -f "demo.c" ]; then
-    echo "エラー: demo.c が見つかりません"
-    echo "demo.c が現在のディレクトリにあることを確認してください"
+if [ ! -f "test/demo.c" ]; then
+    echo "エラー: test/demo.c が見つかりません"
+    echo "プロジェクトルートから実行していることを確認してください"
     exit 1
 fi
 
@@ -51,7 +51,7 @@ echo "✓ ヘルパーコンパイル完了"
 
 # Step 3: demo.cをアセンブリに変換
 echo "Step 3: demo.c をアセンブリに変換中..."
-target/release/t9cc demo.c > build/demo.s
+target/release/t9cc test/demo.c > build/demo.s
 echo "✓ アセンブリ変換完了"
 
 # アセンブリファイルのサイズ表示

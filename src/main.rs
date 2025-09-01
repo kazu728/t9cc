@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, io};
 use t9cc::asm_generator::gen_program_asm;
 use t9cc::error::set_filename;
 use t9cc::parser::program;
@@ -21,21 +21,28 @@ fn main() {
 
     set_filename(filename);
 
-    let token = Tokenizer::new(&input).tokenize();
-
-    let program_ast = program(&mut Some(Box::new(token)), &input);
+    let token = match Tokenizer::new(&input).tokenize() {
+        Ok(tok) => tok,
+        Err(e) => {
+            eprintln!("Tokenize error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let program_ast = match program(&mut Some(Box::new(token)), &input) {
+        Ok(ast) => ast,
+        Err(e) => {
+            eprintln!("Parse Error: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     let mut output = String::new();
-
-    output.push_str(".intel_syntax noprefix\n");
-    output.push_str(".global main\n\n");
-
     gen_program_asm(&program_ast, &mut output);
 
     print!("{}", output);
 }
 
-fn read_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn read_file(path: &str) -> Result<String, io::Error> {
     let mut contents = fs::read_to_string(path)?;
 
     if contents.is_empty() || !contents.ends_with('\n') {

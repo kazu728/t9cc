@@ -1,6 +1,95 @@
-use super::error::error_at;
+use std::fmt;
+use std::iter::Peekable;
 
-const INITIAL_IDENTIFIER_OFFSET: u32 = 8;
+#[derive(Clone, Debug, PartialEq)]
+pub enum TokenizeError {
+    UnexpectedCharacter {
+        pos: usize,
+        ch: char,
+    },
+    UnterminatedCharLiteral {
+        pos: usize,
+    },
+    UnterminatedStringLiteral {
+        pos: usize,
+    },
+    UnterminatedBlockComment {
+        pos: usize,
+    },
+    InvalidCharLiteral {
+        pos: usize,
+    },
+    InvalidNumberLiteral {
+        pos: usize,
+    },
+    UnexpectedEndOfInput,
+    UnexpectedToken {
+        pos: usize,
+        expected: String,
+        found: String,
+    },
+    ExpectedIdentifier {
+        pos: usize,
+    },
+}
+
+impl fmt::Display for TokenizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenizeError::UnexpectedCharacter { pos: _, ch } => {
+                write!(f, "予期しない文字: '{}'", ch)
+            }
+            TokenizeError::UnterminatedCharLiteral { pos: _ } => {
+                write!(f, "文字リテラルの終端がありません")
+            }
+            TokenizeError::UnterminatedStringLiteral { pos: _ } => {
+                write!(f, "文字列リテラルの終端がありません")
+            }
+            TokenizeError::UnterminatedBlockComment { pos: _ } => {
+                write!(f, "コメントが閉じられていません")
+            }
+            TokenizeError::InvalidCharLiteral { pos: _ } => {
+                write!(f, "不正な文字リテラル")
+            }
+            TokenizeError::InvalidNumberLiteral { pos: _ } => {
+                write!(f, "不正な数値リテラル")
+            }
+            TokenizeError::UnexpectedEndOfInput => {
+                write!(f, "予期しない入力の終端です")
+            }
+            TokenizeError::UnexpectedToken {
+                pos: _,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "予期しないトークン: {} ではなく {} が必要です",
+                    found, expected
+                )
+            }
+            TokenizeError::ExpectedIdentifier { pos: _ } => {
+                write!(f, "識別子が必要です")
+            }
+        }
+    }
+}
+
+impl TokenizeError {
+    pub fn pos(&self) -> Option<usize> {
+        match self {
+            TokenizeError::UnexpectedCharacter { pos, .. }
+            | TokenizeError::UnterminatedCharLiteral { pos }
+            | TokenizeError::UnterminatedStringLiteral { pos }
+            | TokenizeError::UnterminatedBlockComment { pos }
+            | TokenizeError::InvalidCharLiteral { pos }
+            | TokenizeError::InvalidNumberLiteral { pos }
+            | TokenizeError::UnexpectedToken { pos, .. }
+            | TokenizeError::ExpectedIdentifier { pos } => Some(*pos),
+            TokenizeError::UnexpectedEndOfInput => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind<'a> {
@@ -26,10 +115,10 @@ pub enum TokenKind<'a> {
     Semicolon, // ;
     Comma,     // ,
 
-    Number(i32),                   // 整数トークン
-    CharLiteral(char),             // 文字リテラル
-    StringLiteral(String),         // 文字列リテラル
-    Identifier(LocalVariable<'a>), // 識別子
+    Number(i32),           // 整数トークン
+    CharLiteral(char),     // 文字リテラル
+    StringLiteral(String), // 文字列リテラル
+    Identifier(&'a str),   // 識別子
 
     Int,    // int型宣言
     Char,   // char型宣言
@@ -50,43 +139,11 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,  // トークンの型
     pub next: MaybeToken<'a>, // 次の入力トークン、最後の入力トークン以外は Some(Box<Token>), 最後のトークンは None
     pub input: &'a str,       // トークン文字列。エラー出力時等に生の文字列があった方が良いので保持
-    pub len: usize,           // トークンの長さ
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LocalVariable<'a> {
-    next: Option<Box<LocalVariable<'a>>>,
-    name: &'a str,
-    offset: u32,
-    len: usize,
-}
-
-impl<'a> LocalVariable<'a> {
-    pub fn new(name: &'a str, offset: u32) -> LocalVariable<'a> {
-        LocalVariable {
-            next: None,
-            name,
-            offset,
-            len: name.len(),
-        }
-    }
-    pub fn get_offset(&self) -> u32 {
-        self.offset
-    }
-
-    pub fn get_name(&self) -> &'a str {
-        self.name
-    }
 }
 
 impl<'a> Token<'a> {
     pub fn new(kind: TokenKind<'a>, input: &'a str, next: MaybeToken<'a>) -> Token<'a> {
-        Token {
-            kind,
-            next,
-            input,
-            len: input.len(),
-        }
+        Token { kind, next, input }
     }
 
     pub fn init(kind: TokenKind<'a>, input: &'a str) -> Token<'a> {
@@ -94,86 +151,13 @@ impl<'a> Token<'a> {
             kind,
             next: None,
             input,
-            len: input.len(),
         }
-    }
-
-    pub fn new_maybe_token(
-        kind: TokenKind<'a>,
-        input: &'a str,
-        next: MaybeToken<'a>,
-    ) -> MaybeToken<'a> {
-        Some(Box::new(Token::new(kind, input, next)))
-    }
-
-    /**
-     * 現在のトークンが指定されたトークン種別かどうか確認する
-     * トークンが指定された種別であればトークンを消費して次に進む
-     */
-    pub fn consume(maybe_token: &mut MaybeToken<'a>, kind: TokenKind<'a>) -> bool {
-        if let Some(token) = maybe_token {
-            if token.kind == kind {
-                *maybe_token = token.next.take();
-                return true;
-            }
-        }
-        false
-    }
-
-    fn expect_token<T, F>(
-        token: &mut MaybeToken<'a>,
-        input: &str,
-        check: F,
-        error_msg: &str,
-    ) -> Option<T>
-    where
-        F: FnOnce(&Token<'a>) -> Option<T>,
-    {
-        if let Some(tok) = token {
-            if let Some(result) = check(tok) {
-                *token = tok.next.take();
-                return Some(result);
-            }
-            error_at(tok.input, input, error_msg);
-        } else {
-            error_at("", input, "予期しないトークンの終端です");
-        }
-        None
-    }
-
-    /**
-     * 次のトークンが指定された種別であることを確認する
-     * トークンが指定された種別であればトークンを消費して次に進む
-     * トークンが指定された種別でない場合はエラーを出力して終了する
-     */
-    pub fn expect(token: &mut MaybeToken<'a>, kind: TokenKind<'a>, input: &str) {
-        Self::expect_token(
-            token,
-            input,
-            |tok| if tok.kind == kind { Some(()) } else { None },
-            &format!("{:?} ではありません", kind),
-        );
-    }
-
-    pub fn expect_identifier(token: &mut MaybeToken<'a>, input: &str) -> String {
-        Self::expect_token(
-            token,
-            input,
-            |tok| match &tok.kind {
-                TokenKind::Identifier(_) => Some(tok.input.to_string()),
-                _ => None,
-            },
-            "識別子が必要です",
-        )
-        .unwrap_or_else(|| unreachable!())
     }
 }
 
 pub struct Tokenizer<'a> {
     input: &'a str,
-    chars: std::iter::Peekable<std::str::CharIndices<'a>>,
-    variable_environment: Vec<(&'a str, u32)>, // (変数名, オフセット)のペア
-    next_offset: u32,
+    chars: Peekable<std::str::CharIndices<'a>>,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -181,12 +165,10 @@ impl<'a> Tokenizer<'a> {
         Tokenizer {
             input,
             chars: input.char_indices().peekable(),
-            variable_environment: Vec::new(),
-            next_offset: INITIAL_IDENTIFIER_OFFSET,
         }
     }
 
-    pub fn tokenize(&mut self) -> Token<'a> {
+    pub fn tokenize(&mut self) -> Result<Token<'a>, TokenizeError> {
         let mut head = Token::init(TokenKind::Begin, "");
         let mut current = &mut head;
 
@@ -197,56 +179,50 @@ impl<'a> Tokenizer<'a> {
             }
 
             if c == '/' {
-                if self.parse_comment(i).is_some() {
+                if self.parse_comment(i)?.is_some() {
                     continue;
                 }
             }
 
             let next_token = match c {
-                '0'..='9' => self.parse_number(i),
-                'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(i),
-                '\'' => self.parse_char_literal(i),
-                '"' => self.parse_string_literal(i),
-                '+' => self.parse_single_char_op(i, TokenKind::Plus),
-                '-' => self.parse_single_char_op(i, TokenKind::Minus),
-                '*' => self.parse_single_char_op(i, TokenKind::Star),
-                '/' => self.parse_single_char_op(i, TokenKind::Slash),
-                '(' => self.parse_single_char_op(i, TokenKind::LParen),
-                ')' => self.parse_single_char_op(i, TokenKind::RParen),
-                '{' => self.parse_single_char_op(i, TokenKind::LBrace),
-                '}' => self.parse_single_char_op(i, TokenKind::RBrace),
-                '[' => self.parse_single_char_op(i, TokenKind::LBracket),
-                ']' => self.parse_single_char_op(i, TokenKind::RBracket),
-                ';' => self.parse_single_char_op(i, TokenKind::Semicolon),
-                ',' => self.parse_single_char_op(i, TokenKind::Comma),
-                '=' => self.parse_multiple_char_op(i, TokenKind::Assign, TokenKind::Equal),
-                '>' => self.parse_multiple_char_op(i, TokenKind::Greater, TokenKind::GreaterEqual),
-                '<' => self.parse_multiple_char_op(i, TokenKind::Less, TokenKind::LessEqual),
-                '&' => self.parse_single_char_op(i, TokenKind::Ampersand),
-                '!' => {
-                    self.chars.next();
-                    if let Some((_, '=')) = self.chars.peek() {
-                        self.chars.next();
-                        Token::new_maybe_token(TokenKind::NotEqual, &self.input[i..i + 2], None)
-                    } else {
-                        unimplemented!("未実装のトークン: '!'");
-                    }
+                '0'..='9' => self.parse_number(i)?,
+                'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(i)?,
+                '\'' => self.parse_char_literal(i)?,
+                '"' => self.parse_string_literal(i)?,
+                '+' => self.parse_single_char_op(i, TokenKind::Plus)?,
+                '-' => self.parse_single_char_op(i, TokenKind::Minus)?,
+                '*' => self.parse_single_char_op(i, TokenKind::Star)?,
+                '/' => self.parse_single_char_op(i, TokenKind::Slash)?,
+                '(' => self.parse_single_char_op(i, TokenKind::LParen)?,
+                ')' => self.parse_single_char_op(i, TokenKind::RParen)?,
+                '{' => self.parse_single_char_op(i, TokenKind::LBrace)?,
+                '}' => self.parse_single_char_op(i, TokenKind::RBrace)?,
+                '[' => self.parse_single_char_op(i, TokenKind::LBracket)?,
+                ']' => self.parse_single_char_op(i, TokenKind::RBracket)?,
+                ';' => self.parse_single_char_op(i, TokenKind::Semicolon)?,
+                ',' => self.parse_single_char_op(i, TokenKind::Comma)?,
+                '=' => self.parse_multiple_char_op(i, TokenKind::Assign, TokenKind::Equal)?,
+                '>' => {
+                    self.parse_multiple_char_op(i, TokenKind::Greater, TokenKind::GreaterEqual)?
                 }
-                _ => unimplemented!("未実装のトークン: '{}'", c),
+                '<' => self.parse_multiple_char_op(i, TokenKind::Less, TokenKind::LessEqual)?,
+                '&' => self.parse_single_char_op(i, TokenKind::Ampersand)?,
+                '!' => self.parse_not_operator(i)?,
+                _ => return Err(TokenizeError::UnexpectedCharacter { pos: i, ch: c }),
             };
 
-            current.next = next_token;
+            current.next = Some(Box::new(next_token));
             current = current.next.as_mut().unwrap();
         }
 
-        *head.next.take().unwrap()
+        Ok(*head.next.take().unwrap())
     }
 
     fn is_alphanumeric(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
     }
 
-    fn parse_number(&mut self, i: usize) -> MaybeToken<'a> {
+    fn parse_number(&mut self, i: usize) -> Result<Token<'a>, TokenizeError> {
         let start = i;
         while let Some((_, c)) = self.chars.peek() {
             if c.is_ascii_digit() {
@@ -260,14 +236,15 @@ impl<'a> Tokenizer<'a> {
             .peek()
             .map(|(i, _)| *i)
             .unwrap_or(self.input.len());
-        Token::new_maybe_token(
-            TokenKind::Number(self.input[start..end].parse().unwrap()),
-            &self.input[start..end],
-            None,
-        )
+
+        let number_str = &self.input[start..end];
+        let number = number_str
+            .parse()
+            .map_err(|_| TokenizeError::InvalidNumberLiteral { pos: start })?;
+        Ok(Token::init(TokenKind::Number(number), number_str))
     }
 
-    fn parse_identifier(&mut self, i: usize) -> MaybeToken<'a> {
+    fn parse_identifier(&mut self, i: usize) -> Result<Token<'a>, TokenizeError> {
         self.chars.next();
         let start = i;
         while let Some((_, c)) = self.chars.peek() {
@@ -285,44 +262,27 @@ impl<'a> Tokenizer<'a> {
 
         let name = &self.input[start..end];
 
-        match name {
-            "int" => Token::new_maybe_token(TokenKind::Int, name, None),
-            "char" => Token::new_maybe_token(TokenKind::Char, name, None),
-            "return" => Token::new_maybe_token(TokenKind::Return, name, None),
-            "if" => Token::new_maybe_token(TokenKind::If, name, None),
-            "else" => Token::new_maybe_token(TokenKind::Else, name, None),
-            "while" => Token::new_maybe_token(TokenKind::While, name, None),
-            "for" => Token::new_maybe_token(TokenKind::For, name, None),
-            "sizeof" => Token::new_maybe_token(TokenKind::Sizeof, name, None),
-            _ => {
-                let offset = if let Some(existing_offset) = self.find_variable(name) {
-                    existing_offset
-                } else {
-                    let new_offset = self.next_offset;
-                    self.variable_environment.push((name, new_offset));
-                    self.next_offset += 8;
-                    new_offset
-                };
-
-                Token::new_maybe_token(
-                    TokenKind::Identifier(LocalVariable::new(name, offset)),
-                    name,
-                    None,
-                )
-            }
-        }
+        let token_kind = match name {
+            "int" => TokenKind::Int,
+            "char" => TokenKind::Char,
+            "return" => TokenKind::Return,
+            "if" => TokenKind::If,
+            "else" => TokenKind::Else,
+            "while" => TokenKind::While,
+            "for" => TokenKind::For,
+            "sizeof" => TokenKind::Sizeof,
+            _ => TokenKind::Identifier(name),
+        };
+        Ok(Token::init(token_kind, name))
     }
 
-    fn find_variable(&self, name: &str) -> Option<u32> {
-        self.variable_environment
-            .iter()
-            .find(|(var_name, _)| *var_name == name)
-            .map(|(_, offset)| *offset)
-    }
-
-    fn parse_single_char_op(&mut self, i: usize, kind: TokenKind<'a>) -> MaybeToken<'a> {
+    fn parse_single_char_op(
+        &mut self,
+        i: usize,
+        kind: TokenKind<'a>,
+    ) -> Result<Token<'a>, TokenizeError> {
         self.chars.next();
-        Token::new_maybe_token(kind, &self.input[i..i + 1], None)
+        Ok(Token::init(kind, &self.input[i..i + 1]))
     }
 
     fn parse_multiple_char_op(
@@ -330,37 +290,45 @@ impl<'a> Tokenizer<'a> {
         i: usize,
         single_kind: TokenKind<'a>,
         double_kind: TokenKind<'a>,
-    ) -> MaybeToken<'a> {
+    ) -> Result<Token<'a>, TokenizeError> {
         self.chars.next();
         if let Some((_, '=')) = self.chars.peek() {
             self.chars.next();
-            Token::new_maybe_token(double_kind, &self.input[i..i + 2], None)
+            Ok(Token::init(double_kind, &self.input[i..i + 2]))
         } else {
-            Token::new_maybe_token(single_kind, &self.input[i..i + 1], None)
+            Ok(Token::init(single_kind, &self.input[i..i + 1]))
         }
     }
 
-    fn parse_char_literal(&mut self, i: usize) -> MaybeToken<'a> {
+    fn parse_not_operator(&mut self, i: usize) -> Result<Token<'a>, TokenizeError> {
+        self.chars.next();
+
+        if let Some((_, '=')) = self.chars.peek() {
+            self.chars.next();
+            Ok(Token::init(TokenKind::NotEqual, &self.input[i..i + 2]))
+        } else {
+            Err(TokenizeError::UnexpectedCharacter { pos: i, ch: '!' })
+        }
+    }
+
+    fn parse_char_literal(&mut self, i: usize) -> Result<Token<'a>, TokenizeError> {
         self.chars.next();
 
         if let Some((char_pos, c)) = self.chars.next() {
             if let Some((end_pos, '\'')) = self.chars.next() {
-                Token::new_maybe_token(TokenKind::CharLiteral(c), &self.input[i..end_pos + 1], None)
+                Ok(Token::init(
+                    TokenKind::CharLiteral(c),
+                    &self.input[i..end_pos + 1],
+                ))
             } else {
-                error_at(
-                    &self.input[char_pos..],
-                    self.input,
-                    "文字リテラルの終端がありません",
-                );
-                None
+                Err(TokenizeError::UnterminatedCharLiteral { pos: char_pos })
             }
         } else {
-            error_at(&self.input[i..], self.input, "不正な文字リテラル");
-            None
+            Err(TokenizeError::InvalidCharLiteral { pos: i })
         }
     }
 
-    fn parse_string_literal(&mut self, i: usize) -> MaybeToken<'a> {
+    fn parse_string_literal(&mut self, i: usize) -> Result<Token<'a>, TokenizeError> {
         self.chars.next();
 
         let mut string_content = String::new();
@@ -368,69 +336,56 @@ impl<'a> Tokenizer<'a> {
         while let Some((pos, c)) = self.chars.peek().copied() {
             if c == '"' {
                 self.chars.next();
-                return Token::new_maybe_token(
+                return Ok(Token::init(
                     TokenKind::StringLiteral(string_content),
                     &self.input[i..pos + 1],
-                    None,
-                );
+                ));
             }
             self.chars.next();
             string_content.push(c);
         }
 
-        error_at(
-            &self.input[i..],
-            self.input,
-            "文字列リテラルの終端がありません",
-        );
-        None
+        Err(TokenizeError::UnterminatedStringLiteral { pos: i })
     }
 
-    fn parse_comment(&mut self, i: usize) -> Option<()> {
-        if let Some((_, next_c)) = self.chars.clone().nth(1) {
-            match next_c {
-                '/' => {
-                    self.chars.next();
-                    self.chars.next();
-                    while let Some((_, ch)) = self.chars.peek() {
-                        if *ch == '\n' {
-                            break;
-                        }
-                        self.chars.next();
-                    }
-                    Some(())
-                }
-                '*' => {
-                    self.chars.next();
-                    self.chars.next();
-                    loop {
-                        match self.chars.peek() {
-                            Some((_, '*')) => {
-                                self.chars.next();
-                                if matches!(self.chars.peek(), Some((_, '/'))) {
-                                    self.chars.next();
-                                    break;
-                                }
-                            }
-                            Some(_) => {
-                                self.chars.next();
-                            }
-                            None => {
-                                error_at(
-                                    &self.input[i..],
-                                    self.input,
-                                    "コメントが閉じられていません",
-                                );
-                            }
-                        }
-                    }
-                    Some(())
-                }
-                _ => None,
-            }
-        } else {
-            None
+    fn parse_comment(&mut self, i: usize) -> Result<Option<()>, TokenizeError> {
+        let mut chars_iter = self.chars.clone();
+        chars_iter.next();
+
+        match chars_iter.peek() {
+            Some((_, '/')) => self.parse_line_comment(),
+            Some((_, '*')) => self.parse_block_comment(i),
+            _ => Ok(None),
         }
+    }
+
+    fn parse_line_comment(&mut self) -> Result<Option<()>, TokenizeError> {
+        self.chars.next();
+        self.chars.next();
+
+        while let Some((_, ch)) = self.chars.peek() {
+            if *ch == '\n' {
+                break;
+            }
+            self.chars.next();
+        }
+        Ok(Some(()))
+    }
+
+    fn parse_block_comment(&mut self, start_pos: usize) -> Result<Option<()>, TokenizeError> {
+        self.chars.next();
+        self.chars.next();
+
+        while let Some((_, ch)) = self.chars.next() {
+            if ch == '*' {
+                if matches!(self.chars.peek(), Some((_, '/'))) {
+                    self.chars.next();
+                    return Ok(Some(()));
+                }
+            }
+        }
+
+        Err(TokenizeError::UnterminatedBlockComment { pos: start_pos })
     }
 }
 
@@ -438,38 +393,6 @@ impl<'a> Tokenizer<'a> {
 mod tests {
 
     use super::*;
-
-    #[test]
-    fn test_consume() {
-        let cases = vec![
-            (
-                Token::new_maybe_token(TokenKind::Plus, "+", None),
-                TokenKind::Plus,
-                true,
-                None,
-            ),
-            (
-                Token::new_maybe_token(TokenKind::Minus, "-", None),
-                TokenKind::Plus,
-                false,
-                Token::new_maybe_token(TokenKind::Minus, "-", None),
-            ),
-            (
-                Token::new_maybe_token(TokenKind::Number(1), "1", None),
-                TokenKind::Plus,
-                false,
-                Token::new_maybe_token(TokenKind::Number(1), "1", None),
-            ),
-        ];
-        for (input, test_kind, expected, next) in cases {
-            let mut token = input;
-            let result = Token::consume(&mut token, test_kind);
-
-            assert_eq!(result, expected);
-            assert_eq!(token, next);
-        }
-    }
-
     #[test]
     fn test_tokenize() {
         struct TestCase<'a> {
@@ -503,62 +426,58 @@ mod tests {
                 expected: Token::new(
                     TokenKind::Number(1),
                     "1",
-                    Token::new_maybe_token(
+                    Some(Box::new(Token::new(
                         TokenKind::LessEqual,
                         "<=",
-                        Token::new_maybe_token(TokenKind::Number(2), "2", None),
-                    ),
+                        Some(Box::new(Token::init(TokenKind::Number(2), "2"))),
+                    ))),
                 ),
             },
             TestCase {
                 input: "var1 + var2",
                 expected: Token::new(
-                    TokenKind::Identifier(LocalVariable::new("var1", 8)),
+                    TokenKind::Identifier("var1"),
                     "var1",
-                    Token::new_maybe_token(
+                    Some(Box::new(Token::new(
                         TokenKind::Plus,
                         "+",
-                        Token::new_maybe_token(
-                            TokenKind::Identifier(LocalVariable::new("var2", 16)),
-                            "var2",
-                            None,
-                        ),
-                    ),
+                        Some(Box::new(Token::init(TokenKind::Identifier("var2"), "var2"))),
+                    ))),
                 ),
             },
             TestCase {
                 input: "a = 1; a = 2",
                 expected: Token::new(
-                    TokenKind::Identifier(LocalVariable::new("a", 8)),
+                    TokenKind::Identifier("a"),
                     "a",
-                    Token::new_maybe_token(
+                    Some(Box::new(Token::new(
                         TokenKind::Assign,
                         "=",
-                        Token::new_maybe_token(
+                        Some(Box::new(Token::new(
                             TokenKind::Number(1),
                             "1",
-                            Token::new_maybe_token(
+                            Some(Box::new(Token::new(
                                 TokenKind::Semicolon,
                                 ";",
-                                Token::new_maybe_token(
-                                    TokenKind::Identifier(LocalVariable::new("a", 8)), // 同じオフセット
+                                Some(Box::new(Token::new(
+                                    TokenKind::Identifier("a"),
                                     "a",
-                                    Token::new_maybe_token(
+                                    Some(Box::new(Token::new(
                                         TokenKind::Assign,
                                         "=",
-                                        Token::new_maybe_token(TokenKind::Number(2), "2", None),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
+                                        Some(Box::new(Token::init(TokenKind::Number(2), "2"))),
+                                    ))),
+                                ))),
+                            ))),
+                        ))),
+                    ))),
                 ),
             },
         ];
 
         for test_case in test_cases {
             let mut tokenizer = Tokenizer::new(test_case.input);
-            let result = tokenizer.tokenize();
+            let result = tokenizer.tokenize().expect("Tokenization should succeed");
 
             assert_eq!(result, test_case.expected);
         }
@@ -567,59 +486,52 @@ mod tests {
     #[test]
     fn test_parse_number() {
         let mut tokenizer = Tokenizer::new("123");
-        let result = tokenizer.parse_number(0);
+        let result = tokenizer
+            .parse_number(0)
+            .expect("Number parsing should succeed");
 
-        assert_eq!(
-            result,
-            Some(Box::new(Token::init(TokenKind::Number(123), "123")))
-        );
+        assert_eq!(result, Token::init(TokenKind::Number(123), "123"));
     }
 
     #[test]
     fn test_parse_identifier() {
         struct TestCase<'a> {
             input: &'a str,
-            expected: Option<Box<Token<'a>>>,
+            expected: Token<'a>,
         }
 
         let cases: Vec<TestCase> = vec![
             TestCase {
                 input: "var1 var2",
-                expected: Token::new_maybe_token(
-                    TokenKind::Identifier(LocalVariable::new("var1", 8)),
-                    "var1",
-                    None,
-                ),
+                expected: Token::init(TokenKind::Identifier("var1"), "var1"),
             },
             TestCase {
                 input: "return",
-                expected: Token::new_maybe_token(TokenKind::Return, "return", None),
+                expected: Token::init(TokenKind::Return, "return"),
             },
             TestCase {
                 input: "return_1",
-                expected: Token::new_maybe_token(
-                    TokenKind::Identifier(LocalVariable::new("return_1", 8)),
-                    "return_1",
-                    None,
-                ),
+                expected: Token::init(TokenKind::Identifier("return_1"), "return_1"),
             },
             TestCase {
                 input: "if",
-                expected: Token::new_maybe_token(TokenKind::If, "if", None),
+                expected: Token::init(TokenKind::If, "if"),
             },
             TestCase {
                 input: "while",
-                expected: Token::new_maybe_token(TokenKind::While, "while", None),
+                expected: Token::init(TokenKind::While, "while"),
             },
             TestCase {
                 input: "for",
-                expected: Token::new_maybe_token(TokenKind::For, "for", None),
+                expected: Token::init(TokenKind::For, "for"),
             },
         ];
 
         for case in cases {
             let mut tokenizer = Tokenizer::new(case.input);
-            let result = tokenizer.parse_identifier(0);
+            let result = tokenizer
+                .parse_identifier(0)
+                .expect("Identifier parsing should succeed");
 
             assert_eq!(result, case.expected);
         }
@@ -628,43 +540,97 @@ mod tests {
     #[test]
     fn test_parse_single_char_op() {
         let mut tokenizer = Tokenizer::new("+");
-        let result = tokenizer.parse_single_char_op(0, TokenKind::Plus);
-        assert_eq!(result, Token::new_maybe_token(TokenKind::Plus, "+", None));
+        let result = tokenizer
+            .parse_single_char_op(0, TokenKind::Plus)
+            .expect("Single char op parsing should succeed");
+        assert_eq!(result, Token::init(TokenKind::Plus, "+"));
+    }
+
+    #[test]
+    fn test_parse_not_operator() {
+        let mut tokenizer = Tokenizer::new("!=");
+        let result = tokenizer
+            .parse_not_operator(0)
+            .expect("Not equal parsing should succeed");
+        assert_eq!(result, Token::init(TokenKind::NotEqual, "!="));
+
+        let mut tokenizer = Tokenizer::new("!");
+        let result = tokenizer.parse_not_operator(0);
+        assert!(result.is_err());
+        if let Err(TokenizeError::UnexpectedCharacter { pos, ch }) = result {
+            assert_eq!(pos, 0);
+            assert_eq!(ch, '!');
+        } else {
+            panic!("Expected UnexpectedCharacter error");
+        }
+    }
+
+    #[test]
+    fn test_parse_line_comment() {
+        let mut tokenizer = Tokenizer::new("// this is a comment\n");
+        let result = tokenizer
+            .parse_line_comment()
+            .expect("Line comment parsing should succeed");
+        assert_eq!(result, Some(()));
+
+        assert_eq!(tokenizer.chars.peek().map(|(_, c)| *c), Some('\n'));
+    }
+
+    #[test]
+    fn test_parse_block_comment() {
+        let mut tokenizer = Tokenizer::new("/* this is a block comment */");
+        let result = tokenizer
+            .parse_block_comment(0)
+            .expect("Block comment parsing should succeed");
+        assert_eq!(result, Some(()));
+
+        let mut tokenizer = Tokenizer::new("/* unterminated");
+        let result = tokenizer.parse_block_comment(0);
+        assert!(result.is_err());
+        if let Err(TokenizeError::UnterminatedBlockComment { pos }) = result {
+            assert_eq!(pos, 0);
+        } else {
+            panic!("Expected UnterminatedBlockComment error");
+        }
     }
 
     #[test]
     fn test_parse_multiple_char_op() {
         let mut tokenizer = Tokenizer::new("==");
-        let result = tokenizer.parse_multiple_char_op(0, TokenKind::Assign, TokenKind::Equal);
+        let result = tokenizer
+            .parse_multiple_char_op(0, TokenKind::Assign, TokenKind::Equal)
+            .expect("Multiple char op parsing should succeed");
 
-        assert_eq!(result, Token::new_maybe_token(TokenKind::Equal, "==", None));
+        assert_eq!(result, Token::init(TokenKind::Equal, "=="));
     }
 
     #[test]
     fn test_parse_char_literal() {
         struct TestCase<'a> {
             input: &'a str,
-            expected: Option<Box<Token<'a>>>,
+            expected: Token<'a>,
         }
 
         let cases: Vec<TestCase> = vec![
             TestCase {
                 input: "'a'",
-                expected: Token::new_maybe_token(TokenKind::CharLiteral('a'), "'a'", None),
+                expected: Token::init(TokenKind::CharLiteral('a'), "'a'"),
             },
             TestCase {
                 input: "'1'",
-                expected: Token::new_maybe_token(TokenKind::CharLiteral('1'), "'1'", None),
+                expected: Token::init(TokenKind::CharLiteral('1'), "'1'"),
             },
             TestCase {
                 input: "'Z'",
-                expected: Token::new_maybe_token(TokenKind::CharLiteral('Z'), "'Z'", None),
+                expected: Token::init(TokenKind::CharLiteral('Z'), "'Z'"),
             },
         ];
 
         for case in cases {
             let mut tokenizer = Tokenizer::new(case.input);
-            let result = tokenizer.parse_char_literal(0);
+            let result = tokenizer
+                .parse_char_literal(0)
+                .expect("Char literal parsing should succeed");
             assert_eq!(result, case.expected);
         }
     }
@@ -697,7 +663,7 @@ mod tests {
 
         for test_case in test_cases {
             let mut tokenizer = Tokenizer::new(test_case.input);
-            let token = tokenizer.tokenize();
+            let token = tokenizer.tokenize().expect("Tokenization should succeed");
             let mut count = 0;
             let mut current = Some(Box::new(token));
 
@@ -718,7 +684,7 @@ mod tests {
     fn test_line_comment_debug() {
         let input = "int main() { return 42; // comment\n}";
         let mut tokenizer = Tokenizer::new(input);
-        let token = tokenizer.tokenize();
+        let token = tokenizer.tokenize().expect("Tokenization should succeed");
 
         let mut current = Some(Box::new(token));
         let mut tokens = Vec::new();

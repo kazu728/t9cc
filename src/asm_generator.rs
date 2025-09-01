@@ -1,25 +1,26 @@
-use crate::parser::{ASTNode, ASTNodeKind, Program, Type, TypeKind};
+use crate::ast::{ASTNode, Function, Program};
+use crate::types::TypeKind;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const REGISTERS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 const MAX_REGISTER_ARGS: usize = 6;
 const STACK_SIZE: usize = 208;
 
-static mut LABEL_COUNTER: usize = 0;
+static LABEL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn get_label_number() -> usize {
-    unsafe {
-        let current = LABEL_COUNTER;
-        LABEL_COUNTER += 1;
-        current
-    }
+    LABEL_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 pub fn gen_program_asm(program: &Program, output: &mut String) {
+    output.push_str(".intel_syntax noprefix\n");
+    output.push_str(".global main\n\n");
+
     if !program.string_literals.is_empty() {
         output.push_str(".section .rodata\n");
-        for (i, string_literal) in program.string_literals.iter().enumerate() {
+        for (i, string) in program.string_literals.iter().enumerate() {
             output.push_str(&format!(".LC{}:\n", i));
-            output.push_str(&format!("  .string \"{}\"\n", string_literal));
+            output.push_str(&format!("  .string \"{}\"\n", string));
         }
         output.push('\n');
     }
@@ -27,499 +28,373 @@ pub fn gen_program_asm(program: &Program, output: &mut String) {
     if !program.global_vars.is_empty() {
         output.push_str(".bss\n");
         for (name, var_type) in &program.global_vars {
-            gen_global_var(name, var_type, output);
+            output.push_str(&format!("{}:\n", name));
+            output.push_str(&format!("  .zero {}\n", var_type.sizeof()));
         }
         output.push('\n');
     }
 
     output.push_str(".text\n");
+
     for function in &program.functions {
         gen_function_asm(function, output);
     }
 }
 
-fn gen_global_var(name: &str, var_type: &Type, output: &mut String) {
-    output.push_str(&format!("{}:\n", name));
-    let size = var_type.sizeof();
-    output.push_str(&format!("  .zero {}\n", size));
-}
+fn gen_function_asm(function: &Function, output: &mut String) {
+    output.push_str(&format!("{}:\n", function.name));
 
-pub fn gen_function_asm(ast_node: &ASTNode, output: &mut String) {
-    match ast_node.kind {
-        ASTNodeKind::FunctionDef => {
-            let (func_name, params) = match &ast_node.lhs {
-                Some(name_and_params) => match &name_and_params.kind {
-                    ASTNodeKind::FunctionName(name) => {
-                        let mut param_names = Vec::new();
-                        let mut param_node = &name_and_params.lhs;
-
-                        while let Some(node) = param_node {
-                            match &node.kind {
-                                ASTNodeKind::Parameter(param_name) => {
-                                    param_names.push(param_name.clone());
-                                }
-                                _ => panic!("Invalid parameter structure"),
-                            }
-                            param_node = &node.rhs;
-                        }
-                        (name.clone(), param_names)
-                    }
-                    _ => panic!("Invalid function definition structure"),
-                },
-                None => panic!("Invalid function definition structure"),
-            };
-
-            output.push_str(&format!("{}:\n", func_name));
-
-            gen_prolog(output);
-
-            for (i, _param) in params.iter().enumerate() {
-                if i < MAX_REGISTER_ARGS {
-                    let offset = (i + 1) * 8;
-                    output.push_str(&format!("  mov [rbp-{}], {}\n", offset, REGISTERS[i]));
-                }
-            }
-
-            match &ast_node.rhs {
-                Some(body) => {
-                    gen_stack_instruction_asm(body, output);
-                    if !contains_return(body) {
-                        output.push_str("  pop rax\n");
-                        output.push_str("  mov rsp, rbp\n");
-                        output.push_str("  pop rbp\n");
-                        output.push_str("  ret\n");
-                    }
-                }
-                None => {
-                    output.push_str("  mov eax, 0\n");
-                    output.push_str("  mov rsp, rbp\n");
-                    output.push_str("  pop rbp\n");
-                    output.push_str("  ret\n");
-                }
-            }
-        }
-        _ => panic!("Expected function definition"),
-    }
-}
-
-fn gen_prolog(output: &mut String) {
     output.push_str("  push rbp\n");
     output.push_str("  mov rbp, rsp\n");
     output.push_str(&format!("  sub rsp, {}\n", STACK_SIZE));
+
+    for (i, _param) in function.params.iter().enumerate() {
+        if i < MAX_REGISTER_ARGS {
+            let offset = (i + 1) * 8;
+            output.push_str(&format!("  mov [rbp-{}], {}\n", offset, REGISTERS[i]));
+        }
+    }
+
+    gen_statement_asm(&function.body, output);
+
+    output.push_str("  mov rax, 0\n");
+    output.push_str("  mov rsp, rbp\n");
+    output.push_str("  pop rbp\n");
+    output.push_str("  ret\n\n");
 }
 
-fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
-    match ast_node.kind {
-        ASTNodeKind::Num(n) => {
-            output.push_str(format!("  push {}\n", n).as_str());
+fn gen_statement_asm(stmt: &ASTNode, output: &mut String) {
+    match stmt {
+        ASTNode::Block { statements } => {
+            for statement in statements {
+                gen_statement_asm(statement, output);
+            }
         }
-        ASTNodeKind::LocalVariable(_) => {
-            gen_local_variable(ast_node, output);
+        ASTNode::ExpressionStatement { expr } => {
+            gen_stack_instruction_asm(expr, output);
             output.push_str("  pop rax\n");
-
-            match ast_node.node_type.as_ref().unwrap().kind {
-                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
-                _ => output.push_str("  mov rax, [rax]\n"),
-            }
-
-            output.push_str("  push rax\n");
         }
-
-        ASTNodeKind::GlobalVariable(ref name) => {
-            gen_global_variable(name, ast_node, output);
-            output.push_str("  pop rax\n");
-
-            match ast_node.node_type.as_ref().unwrap().kind {
-                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
-                _ => output.push_str("  mov rax, [rax]\n"),
+        ASTNode::Return { expr } => {
+            if let Some(expr) = expr {
+                gen_stack_instruction_asm(expr, output);
+                output.push_str("  pop rax\n");
+            } else {
+                output.push_str("  mov rax, 0\n");
             }
-
-            output.push_str("  push rax\n");
+            output.push_str("  mov rsp, rbp\n");
+            output.push_str("  pop rbp\n");
+            output.push_str("  ret\n");
         }
-        ASTNodeKind::Assign => {
-            if let Some(lhs) = &ast_node.lhs {
-                match lhs.kind {
-                    ASTNodeKind::LocalVariable(_) => gen_local_variable(lhs, output),
-                    ASTNodeKind::GlobalVariable(ref name) => gen_global_variable(name, lhs, output),
-                    ASTNodeKind::Deref => gen_local_variable(lhs, output),
-                    _ => panic!("Invalid left-hand side of assignment"),
-                }
-            }
-            if let Some(rhs) = &ast_node.rhs {
-                gen_stack_instruction_asm(rhs, output);
-            }
-
-            output.push_str("  pop rdi\n");
-            output.push_str("  pop rax\n");
-
-            let lhs = ast_node.lhs.as_ref().unwrap();
-            match lhs.node_type.as_ref().unwrap().kind {
-                TypeKind::Char => output.push_str("  mov [rax], dil\n"),
-
-                _ => output.push_str("  mov [rax], rdi\n"),
-            }
-
-            output.push_str("  push rdi\n");
-        }
-        ASTNodeKind::While => {
+        ASTNode::If {
+            condition,
+            then_stmt,
+            else_stmt,
+        } => {
             let label_num = get_label_number();
-            let begin_label = format!(".Lbegin{}", label_num);
-            let end_label = format!(".Lend{}", label_num);
-
-            output.push_str(&format!("{}:\n", begin_label));
-
-            if let Some(cond) = &ast_node.lhs {
-                gen_stack_instruction_asm(cond, output);
-            }
+            gen_stack_instruction_asm(condition, output);
             output.push_str("  pop rax\n");
             output.push_str("  cmp rax, 0\n");
-            output.push_str(&format!("  je {}\n", end_label));
 
-            if let Some(body) = &ast_node.rhs {
-                gen_stack_instruction_asm(body, output);
-                output.push_str("  pop rax\n");
+            if let Some(else_stmt) = else_stmt {
+                output.push_str(&format!("  je .Lelse{}\n", label_num));
+                gen_statement_asm(then_stmt, output);
+                output.push_str(&format!("  jmp .Lend{}\n", label_num));
+                output.push_str(&format!(".Lelse{}:\n", label_num));
+                gen_statement_asm(else_stmt, output);
+                output.push_str(&format!(".Lend{}:\n", label_num));
+            } else {
+                output.push_str(&format!("  je .Lend{}\n", label_num));
+                gen_statement_asm(then_stmt, output);
+                output.push_str(&format!(".Lend{}:\n", label_num));
             }
-
-            output.push_str(&format!("  jmp {}\n", begin_label));
-            output.push_str(&format!("{}:\n", end_label));
-            // while文も値を返すため0をpush
-            output.push_str("  push 0\n");
         }
-        ASTNodeKind::For => {
+        ASTNode::While { condition, body } => {
             let label_num = get_label_number();
-            let begin_label = format!(".Lbegin{}", label_num);
-            let end_label = format!(".Lend{}", label_num);
+            output.push_str(&format!(".Lbegin{}:\n", label_num));
+            gen_stack_instruction_asm(condition, output);
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, 0\n");
+            output.push_str(&format!("  je .Lend{}\n", label_num));
+            gen_statement_asm(body, output);
+            output.push_str(&format!("  jmp .Lbegin{}\n", label_num));
+            output.push_str(&format!(".Lend{}:\n", label_num));
+        }
+        ASTNode::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            let label_num = get_label_number();
 
-            let (for_init, for_update) = match (&ast_node.lhs, &ast_node.rhs) {
-                (Some(init_node), Some(update_node)) => (init_node, update_node),
-                _ => panic!("Invalid for statement structure"),
-            };
-
-            if let Some(init) = &for_init.lhs {
+            if let Some(init) = init {
                 gen_stack_instruction_asm(init, output);
                 output.push_str("  pop rax\n");
             }
 
-            output.push_str(&format!("{}:\n", begin_label));
+            output.push_str(&format!(".Lbegin{}:\n", label_num));
 
-            if let Some(cond) = &for_init.rhs {
-                gen_stack_instruction_asm(cond, output);
+            if let Some(condition) = condition {
+                gen_stack_instruction_asm(condition, output);
                 output.push_str("  pop rax\n");
                 output.push_str("  cmp rax, 0\n");
-                output.push_str(&format!("  je {}\n", end_label));
+                output.push_str(&format!("  je .Lend{}\n", label_num));
             }
 
-            if let Some(body) = &for_update.rhs {
-                gen_stack_instruction_asm(body, output);
-                output.push_str("  pop rax\n");
-            }
+            gen_statement_asm(body, output);
 
-            if let Some(update) = &for_update.lhs {
+            if let Some(update) = update {
                 gen_stack_instruction_asm(update, output);
                 output.push_str("  pop rax\n");
             }
 
-            output.push_str(&format!("  jmp {}\n", begin_label));
-            output.push_str(&format!("{}:\n", end_label));
-            // for文も値を返すため0をpush
-            output.push_str("  push 0\n");
+            output.push_str(&format!("  jmp .Lbegin{}\n", label_num));
+            output.push_str(&format!(".Lend{}:\n", label_num));
         }
-        ASTNodeKind::Return => {
-            if let Some(expr) = &ast_node.lhs {
-                gen_stack_instruction_asm(expr, output);
-                output.push_str("  pop rax\n");
-                output.push_str("  mov rsp, rbp\n");
-                output.push_str("  pop rbp\n");
-                output.push_str("  ret\n");
-            }
-        }
-        ASTNodeKind::Block => {
-            if let Some(lhs) = &ast_node.lhs {
-                gen_stack_instruction_asm(lhs, output);
-                if ast_node.rhs.is_some() {
-                    // rhsがある場合は、lhsの結果を破棄
-                    output.push_str("  pop rax\n");
-                }
-            }
-            if let Some(rhs) = &ast_node.rhs {
-                gen_stack_instruction_asm(rhs, output);
-            }
-            // 空のブロックの場合は0を返す
-            if ast_node.lhs.is_none() && ast_node.rhs.is_none() {
-                output.push_str("  push 0\n");
-            }
-        }
-        ASTNodeKind::If => {
-            let label_num = get_label_number();
-            let else_label = format!(".Lelse{}", label_num);
-            let end_label = format!(".Lend{}", label_num);
-
-            let if_body = match &ast_node.rhs {
-                Some(body) => body,
-                None => panic!("Invalid if statement structure"),
-            };
-
-            if let Some(cond) = &ast_node.lhs {
-                gen_stack_instruction_asm(cond, output);
-            }
+        _ => {
+            gen_stack_instruction_asm(stmt, output);
             output.push_str("  pop rax\n");
-            output.push_str("  cmp rax, 0\n");
-            output.push_str(&format!("  je {}\n", else_label));
-
-            if let Some(then_stmt) = &if_body.lhs {
-                gen_stack_instruction_asm(then_stmt, output);
-            }
-            output.push_str(&format!("  jmp {}\n", end_label));
-            output.push_str(&format!("{}:\n", else_label));
-
-            if let Some(else_stmt) = &if_body.rhs {
-                gen_stack_instruction_asm(else_stmt, output);
-            } else {
-                output.push_str("  push 0\n"); // else節がない場合は0をpush
-            }
-            output.push_str(&format!("{}:\n", end_label));
         }
+    }
+}
 
-        ASTNodeKind::FunctionCall => {
-            let mut arg_count = 0;
-
-            if let Some(args) = &ast_node.rhs {
-                gen_function_arguments(args, output, &mut arg_count);
-            }
-
-            for i in (0..arg_count.min(6)).rev() {
-                output.push_str(&format!("  pop {}\n", REGISTERS[i]));
-            }
-
-            // call命令の前にRSPが16倍数になるよう調整
-            output.push_str("  mov rax, rsp\n");
-            output.push_str("  and rsp, -16\n");
-            output.push_str("  push rax\n");
-
-            // 可変長引数関数用にALに浮動小数点引数の数を設定（我々の場合は常に0）
-            output.push_str("  mov al, 0\n");
-
-            let func_name = if let Some(func_node) = &ast_node.lhs {
-                match &func_node.kind {
-                    ASTNodeKind::FunctionName(name) => name.as_str(),
-                    _ => unreachable!(),
-                }
-            } else {
-                "unknown_function"
-            };
-
-            output.push_str(&format!("  call {}\n", func_name));
-            output.push_str("  pop rsp\n");
-            output.push_str("  push rax\n");
+fn gen_stack_instruction_asm(ast_node: &ASTNode, output: &mut String) {
+    match ast_node {
+        ASTNode::Num { value, .. } => {
+            output.push_str(&format!("  push {}\n", value));
         }
-        ASTNodeKind::Add
-        | ASTNodeKind::Sub
-        | ASTNodeKind::Mul
-        | ASTNodeKind::Div
-        | ASTNodeKind::Equal
-        | ASTNodeKind::NotEqual
-        | ASTNodeKind::Less
-        | ASTNodeKind::LessEqual
-        | ASTNodeKind::Greater
-        | ASTNodeKind::GreaterEqual
-        | ASTNodeKind::PtrAdd
-        | ASTNodeKind::PtrSub => {
-            if let Some(lhs) = &ast_node.lhs {
-                gen_stack_instruction_asm(lhs, output);
-            }
-            if let Some(rhs) = &ast_node.rhs {
-                gen_stack_instruction_asm(rhs, output);
-            }
-            output.push_str("  pop rdi\n");
-            output.push_str("  pop rax\n");
-            match ast_node.kind {
-                ASTNodeKind::Add => output.push_str("  add rax, rdi\n"),
-                ASTNodeKind::Sub => output.push_str("  sub rax, rdi\n"),
-                ASTNodeKind::PtrAdd => {
-                    if let Some(ref lhs_node) = ast_node.lhs {
-                        if let Some(ref node_type) = lhs_node.node_type {
-                            if let Some(ref ptr_to) = node_type.ptr_to {
-                                match ptr_to.kind {
-                                    TypeKind::Char => {}
-                                    TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
-                                    TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
-                                    TypeKind::Array => match &ptr_to.kind {
-                                        TypeKind::Char => {}
-                                        TypeKind::Int => output.push_str("  shl rdi, 2\n"),
-                                        TypeKind::Ptr => output.push_str("  shl rdi, 3\n"),
-                                        _ => output.push_str(&format!(
-                                            "  imul rdi, {}\n",
-                                            ptr_to.sizeof()
-                                        )),
-                                    },
-                                }
-                            }
-                        }
-                    }
-                    output.push_str("  add rax, rdi\n");
-                }
-                ASTNodeKind::PtrSub => {
-                    if let Some(ref lhs_node) = ast_node.lhs {
-                        if let Some(ref node_type) = lhs_node.node_type {
-                            if let Some(ref ptr_to) = node_type.ptr_to {
-                                match ptr_to.kind {
-                                    TypeKind::Char => {}
-                                    TypeKind::Int => output.push_str("  shl rdi, 2\n"), // 4倍 (2^2)
-                                    TypeKind::Ptr => output.push_str("  shl rdi, 3\n"), // 8倍 (2^3)
-                                    TypeKind::Array => match &ptr_to.kind {
-                                        TypeKind::Char => {}
-                                        TypeKind::Int => output.push_str("  shl rdi, 2\n"),
-                                        TypeKind::Ptr => output.push_str("  shl rdi, 3\n"),
-                                        _ => output.push_str(&format!(
-                                            "  imul rdi, {}\n",
-                                            ptr_to.sizeof()
-                                        )),
-                                    },
-                                }
-                            }
-                        }
-                    }
-                    output.push_str("  sub rax, rdi\n");
-                }
-                ASTNodeKind::Mul => output.push_str("  imul rax, rdi\n"),
-                ASTNodeKind::Equal => {
-                    output.push_str("  cmp rax, rdi\n");
-                    output.push_str("  sete al\n");
-                    output.push_str("  movzb rax, al\n");
-                }
-                ASTNodeKind::NotEqual => {
-                    output.push_str("  cmp rax, rdi\n");
-                    output.push_str("  setne al\n");
-                    output.push_str("  movzb rax, al\n");
-                }
-                ASTNodeKind::Less => {
-                    output.push_str("  cmp rax, rdi\n");
-                    output.push_str("  setl al\n");
-                    output.push_str("  movzb rax, al\n");
-                }
-                ASTNodeKind::LessEqual => {
-                    output.push_str("  cmp rax, rdi\n");
-                    output.push_str("  setle al\n");
-                    output.push_str("  movzb rax, al\n");
-                }
-                ASTNodeKind::Greater => {
-                    output.push_str("  cmp rax, rdi\n");
-                    output.push_str("  setg al\n");
-                    output.push_str("  movzb rax, al\n");
-                }
-                ASTNodeKind::GreaterEqual => {
-                    output.push_str("  cmp rax, rdi\n");
-                    output.push_str("  setge al\n");
-                    output.push_str("  movzb rax, al\n");
-                }
-                ASTNodeKind::Div => {
-                    output.push_str("  cqo\n");
-                    output.push_str("  idiv rdi\n");
-                }
-                _ => unreachable!(),
-            }
-            output.push_str("  push rax\n");
-        }
-        ASTNodeKind::Addr => {
-            if let Some(lhs) = &ast_node.lhs {
-                gen_local_variable(lhs, output);
-            }
-        }
-        ASTNodeKind::Deref => {
-            if let Some(lhs) = &ast_node.lhs {
-                gen_stack_instruction_asm(lhs, output);
-            }
+        ASTNode::LocalVariable { node_type, .. } => {
+            gen_lvalue_asm(ast_node, output);
             output.push_str("  pop rax\n");
 
-            match ast_node.node_type.as_ref().unwrap().kind {
+            match node_type.kind {
                 TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
                 _ => output.push_str("  mov rax, [rax]\n"),
             }
-
             output.push_str("  push rax\n");
         }
-        ASTNodeKind::StringLiteral(string_id) => {
-            output.push_str(&format!("  lea rax, [rip + .LC{}]\n", string_id));
-            output.push_str("  push rax\n");
-        }
-        ASTNodeKind::VarDecl => {
-            // 変数宣言は実際にはアセンブリコードを生成しない
-            // スタックバランスのために0をプッシュ
-            // TODO: 全て値を返す設計を見直す
-            output.push_str("  push 0\n");
-        }
-        _ => unreachable!("Unhandled node kind: {:?}", ast_node.kind),
-    }
-}
+        ASTNode::GlobalVariable { node_type, .. } => {
+            gen_lvalue_asm(ast_node, output);
+            output.push_str("  pop rax\n");
 
-fn gen_global_variable(name: &str, _ast_node: &ASTNode, output: &mut String) {
-    output.push_str(&format!("  lea rax, [rip + {}]\n", name));
-    output.push_str("  push rax\n");
-}
-
-fn gen_local_variable(ast_node: &ASTNode, output: &mut String) {
-    match ast_node.kind {
-        ASTNodeKind::LocalVariable(offset) => {
-            output.push_str("  mov rax, rbp\n");
-            output.push_str(format!("  sub rax, {}\n", offset).as_str());
-            output.push_str("  push rax\n");
-        }
-        ASTNodeKind::GlobalVariable(ref name) => {
-            gen_global_variable(name, ast_node, output);
-        }
-        ASTNodeKind::Deref => {
-            if let Some(lhs) = &ast_node.lhs {
-                gen_stack_instruction_asm(lhs, output);
+            match node_type.kind {
+                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
+                _ => output.push_str("  mov rax, [rax]\n"),
             }
+            output.push_str("  push rax\n");
+        }
+        ASTNode::StringLiteral { id, .. } => {
+            output.push_str(&format!("  lea rax, [rip + .LC{}]\n", id));
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Add { lhs, rhs, .. } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  add rax, rdi\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Sub { lhs, rhs, .. } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  sub rax, rdi\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Mul { lhs, rhs, .. } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  imul rax, rdi\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Div { lhs, rhs, .. } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cqo\n");
+            output.push_str("  idiv rdi\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Equal { lhs, rhs } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, rdi\n");
+            output.push_str("  sete al\n");
+            output.push_str("  movzb rax, al\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::NotEqual { lhs, rhs } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, rdi\n");
+            output.push_str("  setne al\n");
+            output.push_str("  movzb rax, al\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Less { lhs, rhs } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, rdi\n");
+            output.push_str("  setl al\n");
+            output.push_str("  movzb rax, al\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::LessEqual { lhs, rhs } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, rdi\n");
+            output.push_str("  setle al\n");
+            output.push_str("  movzb rax, al\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Greater { lhs, rhs } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, rdi\n");
+            output.push_str("  setg al\n");
+            output.push_str("  movzb rax, al\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::GreaterEqual { lhs, rhs } => {
+            gen_stack_instruction_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+            output.push_str("  cmp rax, rdi\n");
+            output.push_str("  setge al\n");
+            output.push_str("  movzb rax, al\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Assign {
+            lhs,
+            rhs,
+            node_type,
+        } => {
+            gen_lvalue_asm(lhs, output);
+            gen_stack_instruction_asm(rhs, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+
+            match node_type.kind {
+                TypeKind::Char => output.push_str("  mov [rax], dil\n"),
+                _ => output.push_str("  mov [rax], rdi\n"),
+            }
+            output.push_str("  push rdi\n");
+        }
+        ASTNode::PtrAdd { ptr, offset, .. } => {
+            gen_stack_instruction_asm(ptr, output);
+            gen_stack_instruction_asm(offset, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+
+            if let Some(ptr_type) = ptr.get_node_type() {
+                let size = ptr_type.get_pointed_type().sizeof();
+                output.push_str(&format!("  imul rdi, {}\n", size));
+            }
+
+            output.push_str("  add rax, rdi\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::PtrSub { ptr, offset, .. } => {
+            gen_stack_instruction_asm(ptr, output);
+            gen_stack_instruction_asm(offset, output);
+            output.push_str("  pop rdi\n");
+            output.push_str("  pop rax\n");
+
+            if let Some(ptr_type) = ptr.get_node_type() {
+                let size = ptr_type.get_pointed_type().sizeof();
+                output.push_str(&format!("  imul rdi, {}\n", size));
+            }
+
+            output.push_str("  sub rax, rdi\n");
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Deref { operand, node_type } => {
+            gen_stack_instruction_asm(operand, output);
+            output.push_str("  pop rax\n");
+
+            match node_type.kind {
+                TypeKind::Char => output.push_str("  movsx rax, BYTE PTR [rax]\n"),
+                _ => output.push_str("  mov rax, [rax]\n"),
+            }
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Addr { operand, .. } => {
+            gen_lvalue_asm(operand, output);
+        }
+        ASTNode::FunctionCall { name, args, .. } => {
+            for arg in args.iter().rev() {
+                gen_stack_instruction_asm(arg, output);
+            }
+
+            for i in 0..args.len().min(MAX_REGISTER_ARGS) {
+                output.push_str(&format!("  pop {}\n", REGISTERS[i]));
+            }
+
+            let align_rsp = (16 - (args.len() % 2) * 8) % 16;
+            if align_rsp != 0 {
+                output.push_str(&format!("  sub rsp, {}\n", align_rsp));
+            }
+
+            output.push_str(&format!("  call {}\n", name));
+
+            if align_rsp != 0 {
+                output.push_str(&format!("  add rsp, {}\n", align_rsp));
+            }
+
+            output.push_str("  push rax\n");
         }
         _ => {
-            panic!("Not an lvalue")
+            panic!(
+                "Unhandled AST node in gen_stack_instruction_asm: {:?}",
+                ast_node
+            );
         }
     }
 }
 
-fn gen_function_arguments(args: &ASTNode, output: &mut String, count: &mut usize) {
-    match args.kind {
-        ASTNodeKind::Block => {
-            if let Some(arg) = &args.lhs {
-                gen_stack_instruction_asm(arg, output);
-                *count += 1;
-            }
-            if let Some(rest) = &args.rhs {
-                gen_function_arguments(rest, output, count);
-            }
+fn gen_lvalue_asm(ast_node: &ASTNode, output: &mut String) {
+    match ast_node {
+        ASTNode::LocalVariable { offset, .. } => {
+            output.push_str(&format!("  lea rax, [rbp-{}]\n", offset));
+            output.push_str("  push rax\n");
         }
-        _ => panic!("Expected block for function arguments"),
+        ASTNode::GlobalVariable { name, .. } => {
+            output.push_str(&format!("  lea rax, [rip + {}]\n", name));
+            output.push_str("  push rax\n");
+        }
+        ASTNode::Deref { operand, .. } => {
+            gen_stack_instruction_asm(operand, output);
+        }
+        _ => {
+            panic!("Cannot generate lvalue for this node type");
+        }
     }
 }
 
-fn contains_return(ast_node: &ASTNode) -> bool {
-    match ast_node.kind {
-        ASTNodeKind::Return => true,
-        ASTNodeKind::Block => {
-            if let Some(lhs) = &ast_node.lhs {
-                if contains_return(lhs) {
-                    return true;
-                }
-            }
-            if let Some(rhs) = &ast_node.rhs {
-                contains_return(rhs)
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{ASTNode, ASTNodeKind};
+    use crate::types::Type;
+    use std::sync::atomic::Ordering;
 
     fn reset_label_counter() {
-        unsafe {
-            LABEL_COUNTER = 0;
-        }
+        LABEL_COUNTER.store(0, Ordering::Relaxed);
     }
 
     #[test]
@@ -533,92 +408,131 @@ mod tests {
         let test_cases = vec![
             TestCase {
                 name: "数値",
-                node: ASTNode::new(ASTNodeKind::Num(42), None, None),
-                expected: "  push 42
-"
+                node: ASTNode::Num {
+                    value: 42,
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  push 42
+"#
                 .to_string(),
             },
             TestCase {
                 name: "加算",
-                node: ASTNode::new(
-                    ASTNodeKind::Add,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ),
-                expected: "  push 1
+                node: ASTNode::Add {
+                    lhs: Box::new(ASTNode::Num {
+                        value: 1,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 2,
+                        node_type: Type::new_int(),
+                    }),
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  push 1
   push 2
   pop rdi
   pop rax
   add rax, rdi
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "減算",
-                node: ASTNode::new(
-                    ASTNodeKind::Sub,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(5), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
-                ),
-                expected: "  push 5
+                node: ASTNode::Sub {
+                    lhs: Box::new(ASTNode::Num {
+                        value: 5,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 3,
+                        node_type: Type::new_int(),
+                    }),
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  push 5
   push 3
   pop rdi
   pop rax
   sub rax, rdi
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "乗算",
-                node: ASTNode::new(
-                    ASTNodeKind::Mul,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(4), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(6), None, None))),
-                ),
-                expected: "  push 4
+                node: ASTNode::Mul {
+                    lhs: Box::new(ASTNode::Num {
+                        value: 4,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 6,
+                        node_type: Type::new_int(),
+                    }),
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  push 4
   push 6
   pop rdi
   pop rax
   imul rax, rdi
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "除算",
-                node: ASTNode::new(
-                    ASTNodeKind::Div,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(8), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ),
-                expected: "  push 8
+                node: ASTNode::Div {
+                    lhs: Box::new(ASTNode::Num {
+                        value: 8,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 2,
+                        node_type: Type::new_int(),
+                    }),
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  push 8
   push 2
   pop rdi
   pop rax
   cqo
   idiv rdi
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "複合式 (1+2)*(3-1)",
-                node: ASTNode::new(
-                    ASTNodeKind::Mul,
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::Add,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                    ))),
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::Sub,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    ))),
-                ),
-                expected: "  push 1
+                node: ASTNode::Mul {
+                    lhs: Box::new(ASTNode::Add {
+                        lhs: Box::new(ASTNode::Num {
+                            value: 1,
+                            node_type: Type::new_int(),
+                        }),
+                        rhs: Box::new(ASTNode::Num {
+                            value: 2,
+                            node_type: Type::new_int(),
+                        }),
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Sub {
+                        lhs: Box::new(ASTNode::Num {
+                            value: 3,
+                            node_type: Type::new_int(),
+                        }),
+                        rhs: Box::new(ASTNode::Num {
+                            value: 1,
+                            node_type: Type::new_int(),
+                        }),
+                        node_type: Type::new_int(),
+                    }),
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  push 1
   push 2
   pop rdi
   pop rax
@@ -634,17 +548,22 @@ mod tests {
   pop rax
   imul rax, rdi
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "等価演算子",
-                node: ASTNode::new(
-                    ASTNodeKind::Equal,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ),
-                expected: "  push 1
+                node: ASTNode::Equal {
+                    lhs: Box::new(ASTNode::Num {
+                        value: 1,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 2,
+                        node_type: Type::new_int(),
+                    }),
+                },
+                expected: r#"  push 1
   push 2
   pop rdi
   pop rax
@@ -652,17 +571,22 @@ mod tests {
   sete al
   movzb rax, al
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "不等価演算子",
-                node: ASTNode::new(
-                    ASTNodeKind::NotEqual,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ),
-                expected: "  push 1
+                node: ASTNode::NotEqual {
+                    lhs: Box::new(ASTNode::Num {
+                        value: 1,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 2,
+                        node_type: Type::new_int(),
+                    }),
+                },
+                expected: r#"  push 1
   push 2
   pop rdi
   pop rax
@@ -670,47 +594,44 @@ mod tests {
   setne al
   movzb rax, al
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "ローカル変数",
-                node: ASTNode::new_with_type(
-                    ASTNodeKind::LocalVariable(8),
-                    None,
-                    None,
-                    Some(Type::new_int()),
-                ),
-                expected: "  mov rax, rbp
-  sub rax, 8
+                node: ASTNode::LocalVariable {
+                    offset: 8,
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  lea rax, [rbp-8]
   push rax
   pop rax
   mov rax, [rax]
   push rax
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "ローカル変数の代入",
-                node: ASTNode::new(
-                    ASTNodeKind::Assign,
-                    Some(Box::new(ASTNode::new_with_type(
-                        ASTNodeKind::LocalVariable(8),
-                        None,
-                        None,
-                        Some(Type::new_int()),
-                    ))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                ),
-                expected: "  mov rax, rbp
-  sub rax, 8
+                node: ASTNode::Assign {
+                    lhs: Box::new(ASTNode::LocalVariable {
+                        offset: 8,
+                        node_type: Type::new_int(),
+                    }),
+                    rhs: Box::new(ASTNode::Num {
+                        value: 42,
+                        node_type: Type::new_int(),
+                    }),
+                    node_type: Type::new_int(),
+                },
+                expected: r#"  lea rax, [rbp-8]
   push rax
   push 42
   pop rdi
   pop rax
   mov [rax], rdi
   push rdi
-"
+"#
                 .to_string(),
             },
         ];
@@ -738,47 +659,72 @@ mod tests {
         let test_cases = vec![
             TestCase {
                 name: "空のブロック",
-                node: ASTNode::new(ASTNodeKind::Block, None, None),
-                expected: "  push 0\n".to_string(),
+                node: ASTNode::Block { statements: vec![] },
+                expected: r#""#.to_string(),
             },
             TestCase {
                 name: "単一文のブロック",
-                node: ASTNode::new(
-                    ASTNodeKind::Block,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                    None,
-                ),
-                expected: "  push 42
-"
+                node: ASTNode::Block {
+                    statements: vec![ASTNode::ExpressionStatement {
+                        expr: Box::new(ASTNode::Num {
+                            value: 42,
+                            node_type: Type::new_int(),
+                        }),
+                    }],
+                },
+                expected: r#"  push 42
+  pop rax
+"#
                 .to_string(),
             },
             TestCase {
                 name: "複数文のブロック {1; 2; 3;}",
-                node: ASTNode::new(
-                    ASTNodeKind::Block,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::Block,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
-                    ))),
-                ),
-                expected: "  push 1
+                node: ASTNode::Block {
+                    statements: vec![
+                        ASTNode::ExpressionStatement {
+                            expr: Box::new(ASTNode::Num {
+                                value: 1,
+                                node_type: Type::new_int(),
+                            }),
+                        },
+                        ASTNode::ExpressionStatement {
+                            expr: Box::new(ASTNode::Num {
+                                value: 2,
+                                node_type: Type::new_int(),
+                            }),
+                        },
+                        ASTNode::ExpressionStatement {
+                            expr: Box::new(ASTNode::Num {
+                                value: 3,
+                                node_type: Type::new_int(),
+                            }),
+                        },
+                    ],
+                },
+                expected: r#"  push 1
   pop rax
   push 2
   pop rax
   push 3
-"
+  pop rax
+"#
                 .to_string(),
             },
             TestCase {
                 name: "while文",
-                node: ASTNode::new(
-                    ASTNodeKind::While,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(2), None, None))),
-                ),
-                expected: ".Lbegin0:
+                node: ASTNode::While {
+                    condition: Box::new(ASTNode::Num {
+                        value: 1,
+                        node_type: Type::new_int(),
+                    }),
+                    body: Box::new(ASTNode::ExpressionStatement {
+                        expr: Box::new(ASTNode::Num {
+                            value: 2,
+                            node_type: Type::new_int(),
+                        }),
+                    }),
+                },
+                expected: r#".Lbegin0:
   push 1
   pop rax
   cmp rax, 0
@@ -787,173 +733,82 @@ mod tests {
   pop rax
   jmp .Lbegin0
 .Lend0:
-  push 0
-"
+"#
                 .to_string(),
             },
             TestCase {
                 name: "if文（else節なし）",
-                node: ASTNode::new(
-                    ASTNodeKind::If,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::IfBody,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                        None,
-                    ))),
-                ),
-                expected: "  push 1
-  pop rax
-  cmp rax, 0
-  je .Lelse0
-  push 42
-  jmp .Lend0
-.Lelse0:
-  push 0
-.Lend0:
-"
-                .to_string(),
-            },
-            TestCase {
-                name: "return文",
-                node: ASTNode::new(
-                    ASTNodeKind::Return,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                    None,
-                ),
-                expected: "  push 42
-  pop rax
-  mov rsp, rbp
-  pop rbp
-  ret
-"
-                .to_string(),
-            },
-            TestCase {
-                name: "if文（else節あり）",
-                node: ASTNode::new(
-                    ASTNodeKind::If,
-                    Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::IfBody,
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(24), None, None))),
-                    ))),
-                ),
-                expected: "  push 0
-  pop rax
-  cmp rax, 0
-  je .Lelse0
-  push 42
-  jmp .Lend0
-.Lelse0:
-  push 24
-.Lend0:
-"
-                .to_string(),
-            },
-            TestCase {
-                name: "for文",
-                node: ASTNode::new(
-                    ASTNodeKind::For,
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::ForInit,
-                        Some(Box::new(ASTNode::new(
-                            ASTNodeKind::Assign,
-                            Some(Box::new(ASTNode::new_with_type(
-                                ASTNodeKind::LocalVariable(8),
-                                None,
-                                None,
-                                Some(Type::new_int()),
-                            ))),
-                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(0), None, None))),
-                        ))),
-                        Some(Box::new(ASTNode::new(
-                            ASTNodeKind::Less,
-                            Some(Box::new(ASTNode::new_with_type(
-                                ASTNodeKind::LocalVariable(8),
-                                None,
-                                None,
-                                Some(Type::new_int()),
-                            ))),
-                            Some(Box::new(ASTNode::new(ASTNodeKind::Num(3), None, None))),
-                        ))),
-                    ))),
-                    Some(Box::new(ASTNode::new(
-                        ASTNodeKind::ForUpdate,
-                        Some(Box::new(ASTNode::new(
-                            ASTNodeKind::Assign,
-                            Some(Box::new(ASTNode::new_with_type(
-                                ASTNodeKind::LocalVariable(8),
-                                None,
-                                None,
-                                Some(Type::new_int()),
-                            ))),
-                            Some(Box::new(ASTNode::new(
-                                ASTNodeKind::Add,
-                                Some(Box::new(ASTNode::new_with_type(
-                                    ASTNodeKind::LocalVariable(8),
-                                    None,
-                                    None,
-                                    Some(Type::new_int()),
-                                ))),
-                                Some(Box::new(ASTNode::new(ASTNodeKind::Num(1), None, None))),
-                            ))),
-                        ))),
-                        Some(Box::new(ASTNode::new(ASTNodeKind::Num(42), None, None))),
-                    ))),
-                ),
-                expected: "  mov rax, rbp
-  sub rax, 8
-  push rax
-  push 0
-  pop rdi
-  pop rax
-  mov [rax], rdi
-  push rdi
-  pop rax
-.Lbegin0:
-  mov rax, rbp
-  sub rax, 8
-  push rax
-  pop rax
-  mov rax, [rax]
-  push rax
-  push 3
-  pop rdi
-  pop rax
-  cmp rax, rdi
-  setl al
-  movzb rax, al
-  push rax
+                node: ASTNode::If {
+                    condition: Box::new(ASTNode::Num {
+                        value: 1,
+                        node_type: Type::new_int(),
+                    }),
+                    then_stmt: Box::new(ASTNode::ExpressionStatement {
+                        expr: Box::new(ASTNode::Num {
+                            value: 42,
+                            node_type: Type::new_int(),
+                        }),
+                    }),
+                    else_stmt: None,
+                },
+                expected: r#"  push 1
   pop rax
   cmp rax, 0
   je .Lend0
   push 42
   pop rax
-  mov rax, rbp
-  sub rax, 8
-  push rax
-  mov rax, rbp
-  sub rax, 8
-  push rax
-  pop rax
-  mov rax, [rax]
-  push rax
-  push 1
-  pop rdi
-  pop rax
-  add rax, rdi
-  push rax
-  pop rdi
-  pop rax
-  mov [rax], rdi
-  push rdi
-  pop rax
-  jmp .Lbegin0
 .Lend0:
-  push 0
-"
+"#
+                .to_string(),
+            },
+            TestCase {
+                name: "return文",
+                node: ASTNode::Return {
+                    expr: Some(Box::new(ASTNode::Num {
+                        value: 42,
+                        node_type: Type::new_int(),
+                    })),
+                },
+                expected: r#"  push 42
+  pop rax
+  mov rsp, rbp
+  pop rbp
+  ret
+"#
+                .to_string(),
+            },
+            TestCase {
+                name: "if文（else節あり）",
+                node: ASTNode::If {
+                    condition: Box::new(ASTNode::Num {
+                        value: 0,
+                        node_type: Type::new_int(),
+                    }),
+                    then_stmt: Box::new(ASTNode::ExpressionStatement {
+                        expr: Box::new(ASTNode::Num {
+                            value: 42,
+                            node_type: Type::new_int(),
+                        }),
+                    }),
+                    else_stmt: Some(Box::new(ASTNode::ExpressionStatement {
+                        expr: Box::new(ASTNode::Num {
+                            value: 24,
+                            node_type: Type::new_int(),
+                        }),
+                    })),
+                },
+                expected: r#"  push 0
+  pop rax
+  cmp rax, 0
+  je .Lelse0
+  push 42
+  pop rax
+  jmp .Lend0
+.Lelse0:
+  push 24
+  pop rax
+.Lend0:
+"#
                 .to_string(),
             },
         ];
@@ -961,12 +816,163 @@ mod tests {
         for case in test_cases {
             reset_label_counter();
             let mut output = String::new();
-            gen_stack_instruction_asm(&case.node, &mut output);
+            gen_statement_asm(&case.node, &mut output);
             assert_eq!(
                 output, case.expected,
                 "テストケース '{}' が失敗しました",
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn test_gen_string_literal() {
+        reset_label_counter();
+        let mut output = String::new();
+
+        let string_node = ASTNode::StringLiteral {
+            id: 0,
+            node_type: Type::new_ptr(Type::new_char()),
+        };
+
+        gen_stack_instruction_asm(&string_node, &mut output);
+
+        let expected = r#"  lea rax, [rip + .LC0]
+  push rax
+"#;
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_gen_function_call() {
+        reset_label_counter();
+        let mut output = String::new();
+
+        let args = vec![
+            ASTNode::Num {
+                value: 10,
+                node_type: Type::new_int(),
+            },
+            ASTNode::Num {
+                value: 20,
+                node_type: Type::new_int(),
+            },
+        ];
+
+        let func_call = ASTNode::FunctionCall {
+            name: "test_func".to_string(),
+            args,
+            node_type: Type::new_int(),
+        };
+
+        gen_stack_instruction_asm(&func_call, &mut output);
+
+        let expected = r#"  push 20
+  push 10
+  pop rdi
+  pop rsi
+  call test_func
+  push rax
+"#;
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_gen_pointer_operations() {
+        reset_label_counter();
+        let mut output = String::new();
+
+        let ptr = Box::new(ASTNode::LocalVariable {
+            offset: 8,
+            node_type: Type::new_ptr(Type::new_int()),
+        });
+
+        let offset = Box::new(ASTNode::Num {
+            value: 2,
+            node_type: Type::new_int(),
+        });
+
+        let ptr_add = ASTNode::PtrAdd {
+            ptr,
+            offset,
+            node_type: Type::new_ptr(Type::new_int()),
+        };
+
+        gen_stack_instruction_asm(&ptr_add, &mut output);
+
+        let expected = r#"  lea rax, [rbp-8]
+  push rax
+  pop rax
+  mov rax, [rax]
+  push rax
+  push 2
+  pop rdi
+  pop rax
+  imul rdi, 4
+  add rax, rdi
+  push rax
+"#;
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_gen_program() {
+        reset_label_counter();
+        let mut output = String::new();
+
+        let body = ASTNode::Return {
+            expr: Some(Box::new(ASTNode::Num {
+                value: 42,
+                node_type: Type::new_int(),
+            })),
+        };
+
+        let main_func = Function {
+            name: "main".to_string(),
+            body,
+            params: vec![],
+        };
+
+        let mut global_vars = std::collections::BTreeMap::new();
+        global_vars.insert("global_x".to_string(), Type::new_int());
+
+        let string_literals = vec!["hello".to_string()];
+
+        let program = Program {
+            functions: vec![main_func],
+            global_vars,
+            string_literals,
+        };
+
+        gen_program_asm(&program, &mut output);
+
+        let expected = r#".intel_syntax noprefix
+.global main
+
+.section .rodata
+.LC0:
+  .string "hello"
+
+.bss
+global_x:
+  .zero 4
+
+.text
+main:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 208
+  push 42
+  pop rax
+  mov rsp, rbp
+  pop rbp
+  ret
+  mov rax, 0
+  mov rsp, rbp
+  pop rbp
+  ret
+
+"#;
+        assert_eq!(output, expected);
     }
 }
